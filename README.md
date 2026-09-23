@@ -1,10 +1,18 @@
 # SATBlock
 
-<!-- TODO: describe here, in a few paragraphs, what the module provides: the
-     :Block (and/or :Solver) classes it defines and the mathematical
-     structure they encode. -->
+`SATBlock` is a SMS++ :Block for the satisfiability problems of the
+propositional logic, i.e., finding values of a set of Boolean variables that
+satisfy a set of clauses, each clause being the disjunction of a number of
+literals (a variable, either as it is or negated). Its physical
+representation is the number of the variables and the clauses, the latter in
+the DIMACS convention; its abstract representation has one `BooleanVariable`
+per variable and one `ClauseConstraint` per clause, the two classes of the
+SMS++ core for the propositional logic, and no Objective, the problem being
+one of feasibility.
 
-`SATBlock` is a SMS++ :Block for ...
+A `SATBlock` is read from the DIMACS CNF format of the SAT competitions and
+of the SATLIB collection, and it is serialized into and deserialized out of
+netCDF like any other :Block; its solution is a `BooleanVariableSolution`.
 
 
 ## Getting started
