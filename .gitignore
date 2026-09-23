@@ -62,3 +62,8 @@ ehthumbs.db
 .directory
 .fuse_hidden*
 .nfs*
+
+# --- instances (distributed through the GitLab Package Registry) ---
+data/cnf
+data/cnf.tgz
+data/.extracted

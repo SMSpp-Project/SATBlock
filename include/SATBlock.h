@@ -183,10 +183,25 @@ class SATBlock : public Block
   const { return( v_x ); }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the BooleanVariable, whose values a Solver writes
+
+ [[nodiscard]] std::vector< BooleanVariable > & get_variables( void ) {
+  return( v_x );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the ClauseConstraint, empty if not generated yet
 
  [[nodiscard]] const std::vector< ClauseConstraint > & get_clause_constraints(
 						       void ) const {
+  return( v_c );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the ClauseConstraint, e.g., to relax some of them
+
+ [[nodiscard]] std::vector< ClauseConstraint > & get_clause_constraints(
+								  void ) {
   return( v_c );
   }
 

@@ -23,9 +23,14 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <utility>
 
 #include "BooleanVariableSolution.h"
 #include "SATBlock.h"
+#ifdef SATBLOCK_HAS_SATSOLVER
+ #include "SATSolver.h"
+ #include <filesystem>
+#endif
 
 // the checks hold in every build type, Release included
 #undef NDEBUG
@@ -69,8 +74,7 @@ static bool load_throws( const std::string & text )
 
 static void set_values( SATBlock & b , unsigned long mask )
 {
- auto & x = const_cast< std::vector< BooleanVariable > & >(
-							b.get_variables() );
+ auto & x = b.get_variables();
  for( unsigned int i = 0 ; i < x.size() ; ++i )
   x[ i ].set_value( ( mask >> i ) & 1 );
  }
@@ -158,7 +162,7 @@ static void test_abstract( void )
  for( unsigned long mask = 0 ; mask < 8 ; ++mask ) {
   set_values( b , mask );
   bool all = true;
-  for( auto & cc : const_cast< std::vector< ClauseConstraint > & >( c ) ) {
+  for( auto & cc : b.get_clause_constraints() ) {
    cc.compute();
    all = all && cc.feasible();
    }
@@ -228,7 +232,7 @@ static void test_round_trips( void )
 
 static void test_satlib( void )
 {
- std::ifstream in( "data/uf20-07.cnf" );
+ std::ifstream in( "../data/cnf/uf20-91/uf20-07.cnf" );
  assert( in );
  SATBlock b;
  b.load( in );
@@ -268,6 +272,128 @@ static void test_satlib( void )
  }
 
 /*--------------------------------------------------------------------------*/
+
+#ifdef SATBLOCK_HAS_SATSOLVER
+
+/// solves b with a SATSolver registered to it, returning the status
+
+static int solve( SATBlock & b , SATSolver * & s )
+{
+ if( ! s ) {
+  s = new SATSolver();
+  b.register_Solver( s );
+  }
+ return( s->compute() );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+static void test_solver( void )
+{
+ // satisfiable: the only solution is x0 = x1 = true, x2 = false
+ {
+  SATBlock b;
+  load_string( b , "p cnf 3 4\n1 -2 0\n2 3 0\n1 -1 0\n-3 0\n" );
+  SATSolver * s = nullptr;
+  assert( solve( b , s ) == Solver::kOK );
+  assert( ( s->get_lb() == 0 ) && ( s->get_ub() == 0 ) );
+  s->get_var_solution();
+  const auto & x = std::as_const( b ).get_variables();
+  assert( x[ 0 ].get_value() && x[ 1 ].get_value() && ! x[ 2 ].get_value() );
+  assert( b.is_feasible() );
+  b.unregister_Solvers( true );
+  }
+
+ // unsatisfiable
+ {
+  SATBlock b;
+  load_string( b , "p cnf 1 2\n1 0\n-1 0\n" );
+  SATSolver * s = nullptr;
+  assert( solve( b , s ) == Solver::kInfeasible );
+  assert( ( s->get_lb() == Inf< Solver::OFValue >() ) &&
+	  ( s->get_ub() == Inf< Solver::OFValue >() ) );
+  assert( ! s->has_var_solution() );
+
+  // relaxing the clause "not x0" makes it satisfiable: the ConstraintMod
+  // makes the SATSolver give the clauses again
+  b.generate_abstract_constraints();
+  b.get_clause_constraints()[ 1 ].relax( true );
+  assert( s->compute() == Solver::kOK );
+  s->get_var_solution();
+  assert( b.get_variables()[ 0 ].get_value() );
+  b.unregister_Solvers( true );
+  }
+
+ // assumptions: x0 or x1, with both fixed to false
+ {
+  SATBlock b;
+  load_string( b , "p cnf 3 1\n1 2 0\n" );
+  b.generate_abstract_variables();
+  auto & x = b.get_variables();
+  SATSolver * s = nullptr;
+  x[ 0 ].set_value( false ); x[ 0 ].is_fixed( true );
+  x[ 1 ].set_value( false ); x[ 1 ].is_fixed( true );
+  x[ 2 ].set_value( true );  x[ 2 ].is_fixed( true );
+  assert( solve( b , s ) == Solver::kInfeasible );
+  assert( s->is_failed( 0 ) && s->is_failed( 1 ) && ! s->is_failed( 2 ) );
+  // unfixing x1 is enough, and the assumptions hold for one compute() only
+  x[ 1 ].is_fixed( false );
+  assert( s->compute() == Solver::kOK );
+  s->get_var_solution();
+  assert( ( ! x[ 0 ].get_value() ) && x[ 1 ].get_value() &&
+	  x[ 2 ].get_value() );
+  b.unregister_Solvers( true );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+/// the SATLIB families whose satisfiability is known by their name
+
+static void test_solver_satlib( void )
+{
+ namespace fs = std::filesystem;
+ struct Family { const char * dir; unsigned n; };
+ const Family families[] = { { "uf50-218" , 50 } , { "uuf50-218" , 50 } ,
+			     { "uf100-430" , 20 } , { "uuf100-430" , 20 } ,
+			     { "uf250-1065" , 2 } , { "uuf250-1065" , 2 } ,
+			     { "aim" , 72 } };
+ unsigned solved = 0;
+ for( const auto & fam : families ) {
+  std::vector< fs::path > files;
+  for( const auto & e : fs::directory_iterator( std::string(
+					 "../data/cnf/" ) + fam.dir ) )
+   files.push_back( e.path() );
+  std::sort( files.begin() , files.end() );
+  if( files.size() > fam.n )
+   files.resize( fam.n );
+
+  for( const auto & f : files ) {
+   const std::string name = f.filename().string();
+   const bool expect_sat = ( name.rfind( "uuf" , 0 ) != 0 ) &&
+			   ( name.find( "-no-" ) == std::string::npos );
+   std::ifstream in( f );
+   SATBlock b;
+   b.load( in );
+   SATSolver * s = nullptr;
+   const int status = solve( b , s );
+   if( expect_sat ) {
+    assert( status == Solver::kOK );
+    s->get_var_solution();
+    assert( b.is_feasible() );
+    }
+   else
+    assert( status == Solver::kInfeasible );
+   b.unregister_Solvers( true );
+   ++solved;
+   }
+  }
+ std::cout << "SATSolver [" << SATSolver::signature() << "]: " << solved
+	   << " SATLIB instances as expected" << std::endl;
+ }
+
+#endif
+
+/*--------------------------------------------------------------------------*/
 /*-------------------------------- main() ----------------------------------*/
 /*--------------------------------------------------------------------------*/
 
@@ -279,6 +405,10 @@ int main( int argc , char ** argv )
  test_solution();
  test_round_trips();
  test_satlib();
+#ifdef SATBLOCK_HAS_SATSOLVER
+ test_solver();
+ test_solver_satlib();
+#endif
 
  std::cout << "SATBlock: all tests passed" << std::endl;
 

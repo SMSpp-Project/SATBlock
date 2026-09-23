@@ -14,6 +14,13 @@ A `SATBlock` is read from the DIMACS CNF format of the SAT competitions and
 of the SATLIB collection, and it is serialized into and deserialized out of
 netCDF like any other :Block; its solution is a `BooleanVariableSolution`.
 
+`SATSolver` solves a `SATBlock` through IPASIR, the incremental interface of
+the SAT competitions, with the SAT solver chosen when the module is linked
+(CaDiCaL by default): a fixed `BooleanVariable` becomes an assumption, so
+that after an unsatisfiable answer the Solver tells which of the fixed
+variables are in its reason, and the clauses are given to the SAT solver
+again only after a Modification that changes them.
+
 
 ## Getting started
 
@@ -24,6 +31,9 @@ your system.
 
 - The [SMS++ core library](https://gitlab.com/smspp/smspp) and its
   requirements.
+- Optionally, for `SATSolver`, a SAT solver with the IPASIR interface, such
+  as [CaDiCaL](https://github.com/arminbiere/cadical), found through
+  `IPASIR_ROOT`; without it the module is built without `SATSolver`.
 
 ### Build and install with CMake
 

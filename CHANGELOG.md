@@ -18,3 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BooleanVariable` per variable and one `ClauseConstraint` per clause as its
   abstract representation, a tautology being a relaxed `ClauseConstraint`
   with no literals; `is_feasible()` and a `BooleanVariableSolution`
+- `SATSolver`, which solves a `SATBlock` through IPASIR (CaDiCaL by default,
+  built only if an IPASIR library is found): the fixed `BooleanVariable` are
+  assumptions and `is_failed()` tells which of them are in the reason of an
+  unsatisfiable answer, `dblMaxTime` stops the SAT solver, and the clauses
+  are given again only after a Modification that changes them
+- the SATLIB instances in `data/cnf`, with the scripts that compress and
+  upload them as the other modules do; the test checks that the uniform
+  random families and the aim ones are satisfiable or not as their name says

@@ -116,6 +116,29 @@ endif ()
 target_sources(${modName} PRIVATE
         src/SATBlock.cpp)
 
+# ----- IPASIR -------------------------------------------------------------- #
+# SATSolver solves a SATBlock through IPASIR, the incremental interface of
+# the SAT competitions, which a SAT solver offers as a C library: CaDiCaL by
+# default, whose library holds the IPASIR functions. IPASIR_ROOT, or the
+# usual CMake search paths, tell where it is; without it the module is built
+# without SATSolver.
+find_path(IPASIR_INCLUDE_DIR ipasir.h
+          HINTS ${IPASIR_ROOT} ENV IPASIR_ROOT
+          PATH_SUFFIXES src include)
+find_library(IPASIR_LIBRARY NAMES cadical ipasir
+             HINTS ${IPASIR_ROOT} ENV IPASIR_ROOT
+             PATH_SUFFIXES build lib)
+if (IPASIR_INCLUDE_DIR AND IPASIR_LIBRARY)
+    message(STATUS "SATSolver: IPASIR from ${IPASIR_LIBRARY}")
+    target_sources(${modName} PRIVATE src/SATSolver.cpp)
+    target_include_directories(${modName} PRIVATE ${IPASIR_INCLUDE_DIR})
+    target_link_libraries(${modName} PRIVATE ${IPASIR_LIBRARY})
+    set(SATBlock_HAS_SATSolver ON)
+else ()
+    message(STATUS "SATSolver: no IPASIR library found, not built")
+    set(SATBlock_HAS_SATSolver OFF)
+endif ()
+
 # When using target_include_directories(), PUBLIC means that any targets
 # that link to this target also need that include directory.
 # Other options are PRIVATE (only affect the current target, not dependencies),
