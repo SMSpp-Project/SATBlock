@@ -152,6 +152,36 @@ find_library(MINISAT_LIBRARY NAMES minisat
 if (MINISAT_INCLUDE_DIR AND MINISAT_LIBRARY)
     message(STATUS "MiniSatSATSolver: MiniSat from ${MINISAT_LIBRARY}")
     target_sources(${modName} PRIVATE src/MiniSatSATSolver.cpp)
+
+    # ----- Compatibility shim for an unpatched MiniSat --------------------- #
+    # The packaged MiniSat (2.2, and its last upstream commit) declares in
+    # minisat/core/SolverTypes.h
+    #     friend Lit mkLit(Var var, bool sign = false);
+    # a friend declaration with a default argument that is not a definition,
+    # which the recent compilers reject (g++ 13 does); the rewrite moves the
+    # default argument to the definition of mkLit(), which changes nothing
+    # for whoever calls it. It is applied, at configure time, to a private
+    # copy of the header, shadowing the system one through an include
+    # directory searched first: MiniSat includes it as
+    # "minisat/core/SolverTypes.h", a path that does not exist next to the
+    # headers including it, so the include directories are searched in
+    # their order. Both rewrites are no-ops on an already-patched MiniSat.
+    set(MINISAT_SHIM_DIR ${CMAKE_CURRENT_BINARY_DIR}/minisat-shim)
+    file(READ ${MINISAT_INCLUDE_DIR}/minisat/core/SolverTypes.h
+         _minisat_types)
+    string(REGEX REPLACE
+            "friend[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,[ \t]*bool[ \t]+sign[ \t]*=[ \t]*false[ \t]*\\)[ \t]*;"
+            "friend Lit mkLit(Var var, bool sign);"
+            _minisat_types "${_minisat_types}")
+    string(REGEX REPLACE
+            "(inline[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,[ \t]*bool[ \t]+sign)([ \t]*\\)[ \t]*{)"
+            "\\1 = false\\2"
+            _minisat_types "${_minisat_types}")
+    file(WRITE ${MINISAT_SHIM_DIR}/minisat/core/SolverTypes.h
+         "${_minisat_types}")
+    target_include_directories(${modName} SYSTEM BEFORE PRIVATE
+            ${MINISAT_SHIM_DIR})
+
     target_include_directories(${modName} SYSTEM PRIVATE
             ${MINISAT_INCLUDE_DIR})
     target_link_libraries(${modName} PRIVATE ${MINISAT_LIBRARY})

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after a Modification that changes them; `CaDiCaLSATSolver` and
   `MiniSatSATSolver`, the ones for CaDiCaL and MiniSat, each built only if
   its SAT solver is found
+- a compatibility shim for the packaged MiniSat, whose
+  `minisat/core/SolverTypes.h` declares `mkLit()` as a friend with a default
+  argument that the recent compilers reject: at configure time a private
+  copy of the header, with the default argument moved to the definition,
+  shadows the system one, a no-op on an already-patched MiniSat
 - the SATLIB instances in `data/cnf`, with the scripts that compress and
   upload them as the other modules do; the test checks that the uniform
   random families and the aim ones are satisfiable or not as their name says
