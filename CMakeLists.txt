@@ -116,27 +116,49 @@ endif ()
 target_sources(${modName} PRIVATE
         src/SATBlock.cpp)
 
-# ----- IPASIR -------------------------------------------------------------- #
-# SATSolver solves a SATBlock through IPASIR, the incremental interface of
-# the SAT competitions, which a SAT solver offers as a C library: CaDiCaL by
-# default, whose library holds the IPASIR functions. IPASIR_ROOT, or the
-# usual CMake search paths, tell where it is; without it the module is built
-# without SATSolver.
-find_path(IPASIR_INCLUDE_DIR ipasir.h
-          HINTS ${IPASIR_ROOT} ENV IPASIR_ROOT
+# ----- SAT solvers --------------------------------------------------------- #
+# SATSolver, the base of the Solver of a SATBlock, needs nothing; each of the
+# classes derived from it wraps a SAT solver, and is built if that SAT solver
+# is found: CaDiCaL (CADICAL_ROOT, holding src/cadical.hpp and
+# build/libcadical.a as its build leaves them, or an installed one) for
+# CaDiCaLSATSolver, and MiniSat (MINISAT_ROOT, an installed one) for
+# MiniSatSATSolver.
+target_sources(${modName} PRIVATE src/SATSolver.cpp)
+
+find_path(CADICAL_INCLUDE_DIR cadical.hpp
+          HINTS ${CADICAL_ROOT} ENV CADICAL_ROOT
           PATH_SUFFIXES src include)
-find_library(IPASIR_LIBRARY NAMES cadical ipasir
-             HINTS ${IPASIR_ROOT} ENV IPASIR_ROOT
+find_library(CADICAL_LIBRARY NAMES cadical
+             HINTS ${CADICAL_ROOT} ENV CADICAL_ROOT
              PATH_SUFFIXES build lib)
-if (IPASIR_INCLUDE_DIR AND IPASIR_LIBRARY)
-    message(STATUS "SATSolver: IPASIR from ${IPASIR_LIBRARY}")
-    target_sources(${modName} PRIVATE src/SATSolver.cpp)
-    target_include_directories(${modName} PRIVATE ${IPASIR_INCLUDE_DIR})
-    target_link_libraries(${modName} PRIVATE ${IPASIR_LIBRARY})
-    set(SATBlock_HAS_SATSolver ON)
+if (CADICAL_INCLUDE_DIR AND CADICAL_LIBRARY)
+    message(STATUS "CaDiCaLSATSolver: CaDiCaL from ${CADICAL_LIBRARY}")
+    target_sources(${modName} PRIVATE src/CaDiCaLSATSolver.cpp)
+    target_include_directories(${modName} SYSTEM PRIVATE
+            ${CADICAL_INCLUDE_DIR})
+    target_link_libraries(${modName} PRIVATE ${CADICAL_LIBRARY})
+    set(SATBlock_HAS_CaDiCaL ON)
 else ()
-    message(STATUS "SATSolver: no IPASIR library found, not built")
-    set(SATBlock_HAS_SATSolver OFF)
+    message(STATUS "CaDiCaLSATSolver: CaDiCaL not found, not built")
+    set(SATBlock_HAS_CaDiCaL OFF)
+endif ()
+
+find_path(MINISAT_INCLUDE_DIR minisat/core/Solver.h
+          HINTS ${MINISAT_ROOT} ENV MINISAT_ROOT
+          PATH_SUFFIXES include)
+find_library(MINISAT_LIBRARY NAMES minisat
+             HINTS ${MINISAT_ROOT} ENV MINISAT_ROOT
+             PATH_SUFFIXES lib)
+if (MINISAT_INCLUDE_DIR AND MINISAT_LIBRARY)
+    message(STATUS "MiniSatSATSolver: MiniSat from ${MINISAT_LIBRARY}")
+    target_sources(${modName} PRIVATE src/MiniSatSATSolver.cpp)
+    target_include_directories(${modName} SYSTEM PRIVATE
+            ${MINISAT_INCLUDE_DIR})
+    target_link_libraries(${modName} PRIVATE ${MINISAT_LIBRARY})
+    set(SATBlock_HAS_MiniSat ON)
+else ()
+    message(STATUS "MiniSatSATSolver: MiniSat not found, not built")
+    set(SATBlock_HAS_MiniSat OFF)
 endif ()
 
 # When using target_include_directories(), PUBLIC means that any targets

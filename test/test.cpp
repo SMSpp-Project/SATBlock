@@ -27,7 +27,8 @@
 
 #include "BooleanVariableSolution.h"
 #include "SATBlock.h"
-#ifdef SATBLOCK_HAS_SATSOLVER
+#if defined( SATBLOCK_HAS_CADICAL ) || defined( SATBLOCK_HAS_MINISAT )
+ #define SATBLOCK_HAS_SATSOLVER
  #include "SATSolver.h"
  #include <filesystem>
 #endif
@@ -275,12 +276,17 @@ static void test_satlib( void )
 
 #ifdef SATBLOCK_HAS_SATSOLVER
 
+/// the name of the SATSolver the tests below are run with
+
+static std::string solver_name;
+
 /// solves b with a SATSolver registered to it, returning the status
 
 static int solve( SATBlock & b , SATSolver * & s )
 {
  if( ! s ) {
-  s = new SATSolver();
+  s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+  assert( s );
   b.register_Solver( s );
   }
  return( s->compute() );
@@ -387,7 +393,7 @@ static void test_solver_satlib( void )
    ++solved;
    }
   }
- std::cout << "SATSolver [" << SATSolver::signature() << "]: " << solved
+ std::cout << solver_name << ": " << solved
 	   << " SATLIB instances as expected" << std::endl;
  }
 
@@ -405,7 +411,13 @@ int main( int argc , char ** argv )
  test_solution();
  test_round_trips();
  test_satlib();
-#ifdef SATBLOCK_HAS_SATSOLVER
+#ifdef SATBLOCK_HAS_CADICAL
+ solver_name = "CaDiCaLSATSolver";
+ test_solver();
+ test_solver_satlib();
+#endif
+#ifdef SATBLOCK_HAS_MINISAT
+ solver_name = "MiniSatSATSolver";
  test_solver();
  test_solver_satlib();
 #endif

@@ -33,8 +33,11 @@ endif ()
 
 add_executable(${modName}_test test.cpp)
 target_link_libraries(${modName}_test PRIVATE ${modNamespace}::${modName})
-if (SATBlock_HAS_SATSolver)
-    target_compile_definitions(${modName}_test PRIVATE SATBLOCK_HAS_SATSOLVER)
+if (SATBlock_HAS_CaDiCaL)
+    target_compile_definitions(${modName}_test PRIVATE SATBLOCK_HAS_CADICAL)
+endif ()
+if (SATBlock_HAS_MiniSat)
+    target_compile_definitions(${modName}_test PRIVATE SATBLOCK_HAS_MINISAT)
 endif ()
 
 if (WIN32 AND BUILD_SHARED_LIBS AND NOT DEFINED ENV{CONDA_BUILD})

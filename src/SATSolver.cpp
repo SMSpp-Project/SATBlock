@@ -21,33 +21,11 @@
 
 #include "SATSolver.h"
 
-extern "C" {
-#include "ipasir.h"
-}
-
 /*--------------------------------------------------------------------------*/
 /*------------------------- NAMESPACE AND USING ----------------------------*/
 /*--------------------------------------------------------------------------*/
 
 using namespace SMSpp_di_unipi_it;
-
-/*--------------------------------------------------------------------------*/
-/*----------------------------- STATIC MEMBERS -----------------------------*/
-/*--------------------------------------------------------------------------*/
-
-// register SATSolver in the Solver factory
-
-SMSpp_insert_in_factory_cpp_0( SATSolver );
-
-/*--------------------------------------------------------------------------*/
-/*--------------------- CONSTRUCTOR AND DESTRUCTOR -------------------------*/
-/*--------------------------------------------------------------------------*/
-
-SATSolver::~SATSolver()
-{
- if( f_ipasir )
-  ipasir_release( f_ipasir );
- }
 
 /*--------------------------------------------------------------------------*/
 /*------------------------- OTHER INITIALIZATIONS --------------------------*/
@@ -96,43 +74,40 @@ void SATSolver::process_outstanding_Modification( void )
 
 void SATSolver::load_clauses( void )
 {
- if( f_ipasir )
-  ipasir_release( f_ipasir );
- f_ipasir = ipasir_init();
+ sat_new();
+ f_has_sat = true;
 
- const auto & cc = f_sat->get_clause_constraints();
+ const auto & cc = std::as_const( *f_sat ).get_clause_constraints();
  if( cc.size() == f_sat->get_number_clauses() ) {
   // the abstract representation, leaving out the relaxed ClauseConstraint
-  const auto & x = f_sat->get_variables();
+  const auto & x = std::as_const( *f_sat ).get_variables();
+  std::vector< int > clause;
   for( const auto & c : cc ) {
    if( c.is_relaxed() )
     continue;
+   clause.clear();
    for( const auto & lit : c.get_literals() ) {
     const int v = int( lit.first - x.data() ) + 1;
-    ipasir_add( f_ipasir , lit.second ? - v : v );
+    clause.push_back( lit.second ? - v : v );
     }
-   ipasir_add( f_ipasir , 0 );
+   sat_clause( clause );
    }
   }
  else
   // the physical representation, where a tautology is harmless
-  for( const auto & clause : f_sat->get_clauses() ) {
-   for( auto lit : clause )
-    ipasir_add( f_ipasir , lit );
-   ipasir_add( f_ipasir , 0 );
-   }
+  for( const auto & clause : f_sat->get_clauses() )
+   sat_clause( clause );
 
  f_reload = false;
  }
 
 /*--------------------------------------------------------------------------*/
 
-int SATSolver::terminate( void * data )
+bool SATSolver::time_is_up( void ) const
 {
- auto solver = static_cast< SATSolver * >( data );
  const std::chrono::duration< double > elapsed =
-  std::chrono::steady_clock::now() - solver->f_start;
- return( elapsed.count() >= solver->MaxTime ? 1 : 0 );
+  std::chrono::steady_clock::now() - f_start;
+ return( elapsed.count() >= MaxTime );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -147,22 +122,18 @@ int SATSolver::compute( bool changedvars )
  f_start = std::chrono::steady_clock::now();
 
  process_outstanding_Modification();
- if( f_reload || ( ! f_ipasir ) )
+ if( f_reload || ( ! f_has_sat ) )
   load_clauses();
 
  // the fixed BooleanVariable, if they exist, are assumptions
  const auto & x = std::as_const( *f_sat ).get_variables();
+ std::vector< int > assumptions;
  for( unsigned int i = 0 ; i < x.size() ; ++i )
   if( x[ i ].is_fixed() )
-   ipasir_assume( f_ipasir , x[ i ].get_value() ? int( i + 1 )
-		                                : - int( i + 1 ) );
+   assumptions.push_back( x[ i ].get_value() ? int( i + 1 )
+			                     : - int( i + 1 ) );
 
- if( MaxTime < Inf< double >() )
-  ipasir_set_terminate( f_ipasir , this , & SATSolver::terminate );
- else
-  ipasir_set_terminate( f_ipasir , nullptr , nullptr );
-
- const int res = ipasir_solve( f_ipasir );
+ const int res = sat_solve( assumptions );
 
  v_failed.assign( f_sat->get_number_variables() , 0 );
  switch( res ) {
@@ -171,13 +142,11 @@ int SATSolver::compute( bool changedvars )
    break;
   case( 20 ):
    f_status = kInfeasible;
-   for( unsigned int i = 0 ; i < x.size() ; ++i )
-    if( x[ i ].is_fixed() )
-     v_failed[ i ] = ipasir_failed( f_ipasir , x[ i ].get_value()
-				    ? int( i + 1 ) : - int( i + 1 ) ) ? 1 : 0;
+   for( auto lit : assumptions )
+    v_failed[ std::abs( lit ) - 1 ] = sat_failed( lit ) ? 1 : 0;
    break;
   default:
-   f_status = terminate( this ) ? int( kStopTime ) : int( kError );
+   f_status = time_is_up() ? int( kStopTime ) : int( kError );
   }
 
  if( f_log )
@@ -219,7 +188,7 @@ void SATSolver::get_var_solution( Configuration * solc )
  f_sat->generate_abstract_variables();
  auto & x = f_sat->get_variables();
  for( unsigned int i = 0 ; i < x.size() ; ++i )
-  x[ i ].set_value( ipasir_val( f_ipasir , int( i + 1 ) ) > 0 );
+  x[ i ].set_value( sat_value( int( i + 1 ) ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -228,13 +197,6 @@ bool SATSolver::is_failed( unsigned int i ) const
 {
  return( ( f_status == kInfeasible ) && ( i < v_failed.size() ) &&
 	 v_failed[ i ] );
- }
-
-/*--------------------------------------------------------------------------*/
-
-const char * SATSolver::signature( void )
-{
- return( ipasir_signature() );
  }
 
 /*--------------------------------------------------------------------------*/

@@ -2,10 +2,11 @@
 /*---------------------------- File SATSolver.h ----------------------------*/
 /*--------------------------------------------------------------------------*/
 /** @file
- * Header file for the *concrete* class SATSolver, which implements the
+ * Header file for the *abstract* class SATSolver, which implements the
  * Solver concept [see Solver.h] for a SATBlock [see SATBlock.h] by means of
- * any SAT solver offering the IPASIR interface, the incremental interface of
- * the SAT competitions (CaDiCaL, MiniSat, Lingeling, CryptoMiniSat, ...).
+ * an incremental SAT solver, the one of each derived class (CaDiCaL,
+ * MiniSat, ...): SATSolver does all that does not depend on the SAT solver,
+ * and asks the derived class for a few primitives only.
  *
  * \author Donato Meoli \n
  *         Dipartimento di Informatica \n
@@ -26,6 +27,7 @@
 /*--------------------------------------------------------------------------*/
 
 #include <chrono>
+#include <string>
 #include <vector>
 
 #include "SATBlock.h"
@@ -47,12 +49,15 @@ namespace SMSpp_di_unipi_it
 /*--------------------------------------------------------------------------*/
 /*---------------------------- CLASS SATSolver -----------------------------*/
 /*--------------------------------------------------------------------------*/
-/// a Solver for a SATBlock through the IPASIR interface
+/// base class of the Solver of a SATBlock through an incremental SAT solver
 /** The SATSolver class implements the Solver concept [see Solver.h] for a
- * SATBlock [see SATBlock.h] by means of a SAT solver offering IPASIR, the
- * incremental interface of the SAT competitions: which SAT solver it is is
- * decided when the module is linked, CaDiCaL by default, since IPASIR is a
- * C interface of which a program holds one implementation only.
+ * SATBlock [see SATBlock.h] by means of an incremental SAT solver, which a
+ * derived class provides through a few protected primitives: create a new
+ * empty SAT solver, give it a clause, solve under assumptions, and read the
+ * value of a variable and whether an assumption is in the reason of an
+ * unsatisfiable answer. Everything else is here, so that the derived
+ * classes (CaDiCaLSATSolver, MiniSatSATSolver, ...) behave the same way,
+ * as the :MILPSolver do for the MILP solvers they wrap.
  *
  * compute() gives the SAT solver the clauses of the SATBlock: those of its
  * abstract representation, if it has been generated, leaving out the
@@ -86,9 +91,9 @@ class SATSolver : public Solver
  SATSolver( void ) : Solver() {}
 
 /*------------------------------- DESTRUCTOR -------------------------------*/
- /// destructor: releases the SAT solver
+ /// destructor: the derived class releases its SAT solver
 
- ~SATSolver() override;
+ ~SATSolver() override = default;
 
 /*------------------------- OTHER INITIALIZATIONS --------------------------*/
  /// sets the SATBlock to solve; throws if the Block is not a SATBlock
@@ -153,9 +158,9 @@ class SATSolver : public Solver
  [[nodiscard]] bool is_failed( unsigned int i ) const;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the name and version of the SAT solver behind IPASIR
+ /// returns the name and version of the SAT solver
 
- static const char * signature( void );
+ [[nodiscard]] virtual std::string signature( void ) const = 0;
 
 /*---------------------- PROTECTED PART OF THE CLASS -----------------------*/
 
@@ -172,15 +177,44 @@ class SATSolver : public Solver
  void load_clauses( void );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// the terminate callback of IPASIR: nonzero when the time is up
+ /// true if the time limit dblMaxTime of the running compute() is reached
 
- static int terminate( void * data );
+ [[nodiscard]] bool time_is_up( void ) const;
+
+/*------------------ THE PRIMITIVES OF THE DERIVED CLASSES -----------------*/
+ /// creates a new, empty SAT solver, releasing the previous one if any
+
+ virtual void sat_new( void ) = 0;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// gives the SAT solver a clause, its literals in the DIMACS convention
+
+ virtual void sat_clause( const std::vector< int > & clause ) = 0;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// solves under the given assumptions: 10 if SAT, 20 if UNSAT, 0 if unknown
+ /** Solves under the given assumptions, literals in the DIMACS convention
+  * holding for this call only, returning 10 if the clauses are
+  * satisfiable, 20 if they are not, and 0 if the SAT solver stops before
+  * knowing, which it has to do as soon as time_is_up() says so. */
+
+ virtual int sat_solve( const std::vector< int > & assumptions ) = 0;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// after 10, the value of the variable var (from 1) in the solution
+
+ [[nodiscard]] virtual bool sat_value( int var ) const = 0;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// after 20, true if the assumption lit is in the reason of the answer
+
+ [[nodiscard]] virtual bool sat_failed( int lit ) const = 0;
 
 /*---------------------------- PROTECTED FIELDS ----------------------------*/
 
  SATBlock * f_sat = nullptr;   ///< the SATBlock being solved
 
- void * f_ipasir = nullptr;    ///< the IPASIR solver, nullptr if none
+ bool f_has_sat = false;       ///< if the SAT solver has been created
 
  bool f_reload = true;         ///< if the clauses have to be given again
 
@@ -191,12 +225,6 @@ class SATSolver : public Solver
  std::chrono::steady_clock::time_point f_start;  ///< start of compute()
 
  std::vector< unsigned char > v_failed;  ///< failed assumptions
-
-/*----------------------- PRIVATE PART OF THE CLASS ------------------------*/
-
- private:
-
- SMSpp_insert_in_factory_h;  // insert SATSolver in the Solver factory
 
 /*--------------------------------------------------------------------------*/
 
