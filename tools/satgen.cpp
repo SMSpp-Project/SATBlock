@@ -126,7 +126,8 @@ static void draw_vars( Rng & rng , unsigned int first , unsigned int n ,
 /// gives signs to the variables of a hard clause, satisfying the planted
 /// assignment if there is one
 
-static SATBlock::Clause make_hard( Rng & rng , const std::vector< int > & vars ,
+static SATBlock::Clause make_hard( Rng & rng ,
+				   const std::vector< int > & vars ,
 				   const std::vector< bool > & planted )
 {
  SATBlock::Clause clause( vars.size() );

@@ -57,7 +57,7 @@ namespace SMSpp_di_unipi_it
  * empty SAT solver, give it a clause, solve under assumptions, and read the
  * value of a variable and whether an assumption is in the reason of an
  * unsatisfiable answer. Everything else is here, so that the derived
- * classes (CaDiCaLSATSolver, MiniSatSATSolver, ...) behave the same way,
+ * classes (CaDiCaLSATSolver, MiniSATSolver, ...) behave the same way,
  * as the :MILPSolver do for the MILP solvers they wrap.
  *
  * compute() gives the SAT solver the hard clauses of the SATBlock: the
@@ -111,6 +111,15 @@ namespace SMSpp_di_unipi_it
  * solution found on the way is an upper bound; the solution found with all
  * the assumptions is optimal.
  *
+ * Each core is *reduced* before being used, since a smaller core gives a
+ * stronger totalizer and a larger weight: it is first *trimmed*, i.e., given
+ * again to the SAT solver as the only assumptions, whose reason is a core in
+ * turn, up to intMaxSATTrim times or until it stops shrinking; then it is
+ * *minimized* by deletion, i.e., each of its assumptions is left out in
+ * turn and the rest given to the SAT solver with a budget of
+ * intMaxSATMinBudget conflicts, the assumption staying out if the rest is
+ * found unsatisfiable within the budget.
+ *
  * After kOK get_lb() and get_ub() are both the optimal value. After
  * kStopTime get_lb() is the lower bound reached and get_ub() the value of
  * the best solution found, +INF if none, which get_var_solution() writes;
@@ -162,6 +171,16 @@ class SATSolver : public Solver
 				* the hard clauses only, 1 for one of
 				* minimum weight of the soft clauses violated,
 				* by the algorithm OLL [see the class]. */
+  intMaxSATTrim ,              ///< times a core of OLL is trimmed at most
+                               /**< The most times a core of OLL is given
+				* again to the SAT solver to shrink it [see
+				* the class]; 0 means never, the default is
+				* 5. */
+  intMaxSATMinBudget ,         ///< conflicts for minimizing a core of OLL
+                               /**< The budget of conflicts of each call of
+				* the SAT solver that minimizes a core of OLL
+				* by deletion [see the class]; 0 means no
+				* minimization, the default is 1000. */
   intLastAlgParSATS            ///< first new int parameter of derived classes
   };
 
@@ -178,36 +197,26 @@ class SATSolver : public Solver
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the default of the int parameters, 0 for intMaxSAT
+ /// returns the default of the int parameters
 
- [[nodiscard]] int get_dflt_int_par( idx_type par ) const override {
-  return( par == intMaxSAT ? 0 : Solver::get_dflt_int_par( par ) );
-  }
+ [[nodiscard]] int get_dflt_int_par( idx_type par ) const override;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the int parameters, intMaxSAT included
+ /// returns the int parameters
 
- [[nodiscard]] int get_int_par( idx_type par ) const override {
-  return( par == intMaxSAT ? MaxSATAlg : Solver::get_int_par( par ) );
-  }
+ [[nodiscard]] int get_int_par( idx_type par ) const override;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the index of the int parameter with the given name
 
  [[nodiscard]] idx_type int_par_str2idx( const std::string & name )
-  const override {
-  return( name == "intMaxSAT" ? idx_type( intMaxSAT ) :
-	  Solver::int_par_str2idx( name ) );
-  }
+  const override;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the name of the int parameter with the given index
 
  [[nodiscard]] const std::string & int_par_idx2str( idx_type idx )
-  const override {
-  static const std::string name = "intMaxSAT";
-  return( idx == intMaxSAT ? name : Solver::int_par_idx2str( idx ) );
-  }
+  const override;
 
 /*--------------------- METHODS FOR SOLVING THE MODEL ----------------------*/
  /// solves the SATBlock
@@ -290,6 +299,15 @@ class SATSolver : public Solver
  int oll( const std::vector< int > & fixed );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// reduces a core of OLL by trimming and minimization
+ /** Reduces the core \p core of OLL, soft assumptions that do not hold
+  * together with the assumptions \p fixed, by trimming and minimization
+  * [see the comments to the class]; what is left is still a core. */
+
+ void reduce_core( const std::vector< int > & fixed ,
+		   std::vector< int > & core );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// builds the tree of a totalizer over the given literals, no clause yet
  /** Builds the tree of a totalizer over the literals \p ins[ lo , hi ),
   * returning the index of its root in v_tot; the outputs are made, with
@@ -328,9 +346,11 @@ class SATSolver : public Solver
  /** Solves under the given assumptions, literals in the DIMACS convention
   * holding for this call only, returning 10 if the clauses are
   * satisfiable, 20 if they are not, and 0 if the SAT solver stops before
-  * knowing, which it has to do as soon as time_is_up() says so. */
+  * knowing, which it has to do as soon as time_is_up() says so, and after
+  * \p conflicts conflicts if it is not negative. */
 
- virtual int sat_solve( const std::vector< int > & assumptions ) = 0;
+ virtual int sat_solve( const std::vector< int > & assumptions ,
+			long conflicts = -1 ) = 0;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// after 10, the value of the variable var (from 1) in the solution
@@ -357,6 +377,10 @@ class SATSolver : public Solver
  double f_lb = - Inf< double >();  ///< the lower bound of the last compute()
 
  int MaxSATAlg = 0;            ///< the parameter intMaxSAT
+
+ int CoreTrim = 5;             ///< the parameter intMaxSATTrim
+
+ int CoreMinBudget = 1000;     ///< the parameter intMaxSATMinBudget
 
  int f_next_var = 0;           ///< the last variable of the SAT solver
 

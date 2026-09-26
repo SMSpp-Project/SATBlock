@@ -1,8 +1,8 @@
 /*--------------------------------------------------------------------------*/
-/*------------------------ File MiniSatSATSolver.h -------------------------*/
+/*-------------------------- File MiniSATSolver.h --------------------------*/
 /*--------------------------------------------------------------------------*/
 /** @file
- * Header file for the *concrete* class MiniSatSATSolver, a SATSolver [see
+ * Header file for the *concrete* class MiniSATSolver, a SATSolver [see
  * SATSolver.h] whose incremental SAT solver is MiniSat.
  *
  * \author Donato Meoli \n
@@ -15,8 +15,8 @@
 /*----------------------------- DEFINITIONS --------------------------------*/
 /*--------------------------------------------------------------------------*/
 
-#ifndef __MiniSatSATSolver
- #define __MiniSatSATSolver
+#ifndef __MiniSATSolver
+ #define __MiniSATSolver
                       /* self-identification: #endif at the end of the file */
 
 /*--------------------------------------------------------------------------*/
@@ -39,20 +39,20 @@ namespace SMSpp_di_unipi_it
 /*--------------------------------------------------------------------------*/
 /*-------------------------------- CLASSES ---------------------------------*/
 /*--------------------------------------------------------------------------*/
-/** @defgroup MiniSatSATSolver_CLASSES Classes in MiniSatSATSolver.h
+/** @defgroup MiniSATSolver_CLASSES Classes in MiniSATSolver.h
  *  @{ */
 
 /*--------------------------------------------------------------------------*/
-/*------------------------- CLASS MiniSatSATSolver -------------------------*/
+/*-------------------------- CLASS MiniSATSolver ---------------------------*/
 /*--------------------------------------------------------------------------*/
 /// a SATSolver whose incremental SAT solver is MiniSat
-/** The MiniSatSATSolver class is a SATSolver [see SATSolver.h] whose
+/** The MiniSATSolver class is a SATSolver [see SATSolver.h] whose
  * incremental SAT solver is MiniSat (http://minisat.se), used through its
  * C++ interface. MiniSat having no callback to be stopped, the time limit
  * is enforced by solving with a budget of conflicts and checking the time
  * between one budget and the next. */
 
-class MiniSatSATSolver : public SATSolver
+class MiniSATSolver : public SATSolver
 {
 /*----------------------- PUBLIC PART OF THE CLASS -------------------------*/
 
@@ -60,9 +60,9 @@ class MiniSatSATSolver : public SATSolver
 
 /*------------------------- CONSTRUCTOR AND DESTRUCTOR ---------------------*/
 
- MiniSatSATSolver( void );    ///< constructor: no SAT solver until compute()
+ MiniSATSolver( void );    ///< constructor: no SAT solver until compute()
 
- ~MiniSatSATSolver() override;  ///< destructor: releases the SAT solver
+ ~MiniSATSolver() override;  ///< destructor: releases the SAT solver
 
 /*---------------------- METHODS FOR READING RESULTS -----------------------*/
  /// returns the name and version of MiniSat
@@ -79,7 +79,8 @@ class MiniSatSATSolver : public SATSolver
 
  void sat_clause( const std::vector< int > & clause ) override;
 
- int sat_solve( const std::vector< int > & assumptions ) override;
+ int sat_solve( const std::vector< int > & assumptions ,
+		 long conflicts = -1 ) override;
 
  [[nodiscard]] bool sat_value( int var ) const override;
 
@@ -93,13 +94,13 @@ class MiniSatSATSolver : public SATSolver
 
  private:
 
- SMSpp_insert_in_factory_h;  // insert MiniSatSATSolver in the Solver factory
+ SMSpp_insert_in_factory_h;  // insert MiniSATSolver in the Solver factory
 
 /*--------------------------------------------------------------------------*/
 
- };  // end( class( MiniSatSATSolver ) )
+ };  // end( class( MiniSATSolver ) )
 
-/** @} end( group( MiniSatSATSolver_CLASSES ) ) */
+/** @} end( group( MiniSATSolver_CLASSES ) ) */
 
 /*--------------------------------------------------------------------------*/
 
@@ -107,8 +108,8 @@ class MiniSatSATSolver : public SATSolver
 
 /*--------------------------------------------------------------------------*/
 
-#endif  /* MiniSatSATSolver.h included */
+#endif  /* MiniSATSolver.h included */
 
 /*--------------------------------------------------------------------------*/
-/*---------------------- End File MiniSatSATSolver.h -----------------------*/
+/*------------------------ End File MiniSATSolver.h ------------------------*/
 /*--------------------------------------------------------------------------*/

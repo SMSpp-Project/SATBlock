@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tells which of them are in the reason of an unsatisfiable answer,
   `dblMaxTime` stops the SAT solver, and the clauses are given again only
   after a Modification that changes them; `CaDiCaLSATSolver` and
-  `MiniSatSATSolver`, the ones for CaDiCaL and MiniSat, each built only if
+  `MiniSATSolver`, the ones for CaDiCaL and MiniSat, each built only if
   its SAT solver is found
 - a compatibility shim for the packaged MiniSat, whose
   `minisat/core/SolverTypes.h` declares `mkLit()` as a friend with a default
@@ -47,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on top of those it has, and reports as upper bound the weight of the soft
   clauses its solution violates; with `intMaxSAT` = 1 it solves the weighted
   MaxSAT by the core-guided algorithm OLL, with incremental totalizers and
-  the assumptions stratified by weight, the best solution found being kept
+  the assumptions stratified by weight, each core trimmed and minimized
+  (`intMaxSATTrim`, `intMaxSATMinBudget`), the best solution found being kept
   when the time limit stops it, the test checking it against the
   enumeration on random instances
 - `smspp_satgen`, the generator of random weighted partial MaxSAT instances

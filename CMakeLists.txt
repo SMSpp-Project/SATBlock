@@ -122,7 +122,7 @@ target_sources(${modName} PRIVATE
 # is found: CaDiCaL (CADICAL_ROOT, holding src/cadical.hpp and
 # build/libcadical.a as its build leaves them, or an installed one) for
 # CaDiCaLSATSolver, and MiniSat (MINISAT_ROOT, an installed one) for
-# MiniSatSATSolver.
+# MiniSATSolver.
 target_sources(${modName} PRIVATE src/SATSolver.cpp)
 
 find_path(CADICAL_INCLUDE_DIR cadical.hpp
@@ -150,8 +150,8 @@ find_library(MINISAT_LIBRARY NAMES minisat
              HINTS ${MINISAT_ROOT} ENV MINISAT_ROOT
              PATH_SUFFIXES lib)
 if (MINISAT_INCLUDE_DIR AND MINISAT_LIBRARY)
-    message(STATUS "MiniSatSATSolver: MiniSat from ${MINISAT_LIBRARY}")
-    target_sources(${modName} PRIVATE src/MiniSatSATSolver.cpp)
+    message(STATUS "MiniSATSolver: MiniSat from ${MINISAT_LIBRARY}")
+    target_sources(${modName} PRIVATE src/MiniSATSolver.cpp)
 
     # ----- Compatibility shim for an unpatched MiniSat --------------------- #
     # The packaged MiniSat (2.2, and its last upstream commit) declares in
@@ -187,7 +187,7 @@ if (MINISAT_INCLUDE_DIR AND MINISAT_LIBRARY)
     target_link_libraries(${modName} PRIVATE ${MINISAT_LIBRARY})
     set(SATBlock_HAS_MiniSat ON)
 else ()
-    message(STATUS "MiniSatSATSolver: MiniSat not found, not built")
+    message(STATUS "MiniSATSolver: MiniSat not found, not built")
     set(SATBlock_HAS_MiniSat OFF)
 endif ()
 

@@ -17,6 +17,7 @@
 /*--------------------------------------------------------------------------*/
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <utility>
 
@@ -52,14 +53,70 @@ void SATSolver::set_Block( Block * block )
 
 void SATSolver::set_par( idx_type par , int value )
 {
- if( par == intMaxSAT ) {
-  if( ( value != 0 ) && ( value != 1 ) )
-   throw( std::invalid_argument( "SATSolver::set_par: intMaxSAT must be 0 "
-				 "or 1, not " + std::to_string( value ) ) );
-  MaxSATAlg = value;
+ switch( par ) {
+  case( intMaxSAT ):
+   if( ( value != 0 ) && ( value != 1 ) )
+    throw( std::invalid_argument( "SATSolver::set_par: intMaxSAT must be 0 "
+				  "or 1, not " + std::to_string( value ) ) );
+   MaxSATAlg = value;
+   break;
+  case( intMaxSATTrim ):
+   CoreTrim = std::max( value , 0 );
+   break;
+  case( intMaxSATMinBudget ):
+   CoreMinBudget = std::max( value , 0 );
+   break;
+  default:
+   Solver::set_par( par , value );
   }
- else
-  Solver::set_par( par , value );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+int SATSolver::get_dflt_int_par( idx_type par ) const
+{
+ switch( par ) {
+  case( intMaxSAT ):          return( 0 );
+  case( intMaxSATTrim ):      return( 5 );
+  case( intMaxSATMinBudget ): return( 1000 );
+  default:                    return( Solver::get_dflt_int_par( par ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+int SATSolver::get_int_par( idx_type par ) const
+{
+ switch( par ) {
+  case( intMaxSAT ):          return( MaxSATAlg );
+  case( intMaxSATTrim ):      return( CoreTrim );
+  case( intMaxSATMinBudget ): return( CoreMinBudget );
+  default:                    return( Solver::get_int_par( par ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
+{
+ if( name == "intMaxSAT" )
+  return( intMaxSAT );
+ if( name == "intMaxSATTrim" )
+  return( intMaxSATTrim );
+ if( name == "intMaxSATMinBudget" )
+  return( intMaxSATMinBudget );
+ return( Solver::int_par_str2idx( name ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+const std::string & SATSolver::int_par_idx2str( idx_type idx ) const
+{
+ static const std::array< std::string , 3 > names = { "intMaxSAT" ,
+				"intMaxSATTrim" , "intMaxSATMinBudget" };
+ if( ( idx >= intMaxSAT ) && ( idx < intLastAlgParSATS ) )
+  return( names[ idx - intMaxSAT ] );
+ return( Solver::int_par_idx2str( idx ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -308,6 +365,46 @@ void SATSolver::tot_extend( int node , std::size_t k )
 
 /*--------------------------------------------------------------------------*/
 
+void SATSolver::reduce_core( const std::vector< int > & fixed ,
+			     std::vector< int > & core )
+{
+ std::vector< int > as;
+ std::vector< int > smaller;
+
+ // trimming: the core alone, until it stops shrinking
+ for( int t = 0 ; ( t < CoreTrim ) && ( core.size() > 1 ) ; ++t ) {
+  as = fixed;
+  as.insert( as.end() , core.begin() , core.end() );
+  if( sat_solve( as ) != 20 )  // the time is up
+   return;
+  smaller.clear();
+  for( auto lit : core )
+   if( sat_failed( lit ) )
+    smaller.push_back( lit );
+  if( smaller.empty() || ( smaller.size() == core.size() ) )
+   break;
+  core.swap( smaller );
+  }
+
+ // minimization: each assumption out in turn, within the budget
+ if( CoreMinBudget <= 0 )
+  return;
+ for( std::size_t i = 0 ; ( i < core.size() ) && ( core.size() > 1 ) ; ) {
+  if( time_is_up() )
+   return;
+  as = fixed;
+  for( std::size_t j = 0 ; j < core.size() ; ++j )
+   if( j != i )
+    as.push_back( core[ j ] );
+  if( sat_solve( as , CoreMinBudget ) == 20 )
+   core.erase( core.begin() + i );  // the rest is a core
+  else
+   ++i;
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
 int SATSolver::oll( const std::vector< int > & fixed )
 {
  // the SAT solver anew with the hard clauses, the soft ones added below
@@ -440,6 +537,8 @@ int SATSolver::oll( const std::vector< int > & fixed )
      v_failed[ std::abs( lit ) - 1 ] = sat_failed( lit ) ? 1 : 0;
    return( hres );
    }
+
+  reduce_core( fixed , core );
 
   double wmin = Inf< double >();
   for( auto lit : core )

@@ -1,8 +1,8 @@
 /*--------------------------------------------------------------------------*/
-/*----------------------- File MiniSatSATSolver.cpp ------------------------*/
+/*------------------------- File MiniSATSolver.cpp -------------------------*/
 /*--------------------------------------------------------------------------*/
 /** @file
- * Implementation of the MiniSatSATSolver class.
+ * Implementation of the MiniSATSolver class.
  *
  * \author Donato Meoli \n
  *         Dipartimento di Informatica \n
@@ -18,7 +18,7 @@
 
 #include "minisat/core/Solver.h"
 
-#include "MiniSatSATSolver.h"
+#include "MiniSATSolver.h"
 
 /*--------------------------------------------------------------------------*/
 /*------------------------- NAMESPACE AND USING ----------------------------*/
@@ -30,9 +30,9 @@ using namespace SMSpp_di_unipi_it;
 /*----------------------------- STATIC MEMBERS -----------------------------*/
 /*--------------------------------------------------------------------------*/
 
-// register MiniSatSATSolver in the Solver factory
+// register MiniSATSolver in the Solver factory
 
-SMSpp_insert_in_factory_cpp_0( MiniSatSATSolver );
+SMSpp_insert_in_factory_cpp_0( MiniSATSolver );
 
 /*--------------------------------------------------------------------------*/
 /*-------------------------------- FUNCTIONS -------------------------------*/
@@ -59,29 +59,29 @@ Minisat::Lit to_lit( Minisat::Solver & s , int lit )
 /*--------------------- CONSTRUCTOR AND DESTRUCTOR -------------------------*/
 /*--------------------------------------------------------------------------*/
 
-MiniSatSATSolver::MiniSatSATSolver( void ) : SATSolver() {}
+MiniSATSolver::MiniSATSolver( void ) : SATSolver() {}
 
-MiniSatSATSolver::~MiniSatSATSolver() = default;
+MiniSATSolver::~MiniSATSolver() = default;
 
 /*--------------------------------------------------------------------------*/
 /*--------------------------------- METHODS --------------------------------*/
 /*--------------------------------------------------------------------------*/
 
-std::string MiniSatSATSolver::signature( void ) const
+std::string MiniSATSolver::signature( void ) const
 {
  return( "minisat" );
  }
 
 /*--------------------------------------------------------------------------*/
 
-void MiniSatSATSolver::sat_new( void )
+void MiniSATSolver::sat_new( void )
 {
  f_solver = std::make_unique< Minisat::Solver >();
  }
 
 /*--------------------------------------------------------------------------*/
 
-void MiniSatSATSolver::sat_clause( const std::vector< int > & clause )
+void MiniSATSolver::sat_clause( const std::vector< int > & clause )
 {
  Minisat::vec< Minisat::Lit > ps;
  for( auto lit : clause )
@@ -91,11 +91,20 @@ void MiniSatSATSolver::sat_clause( const std::vector< int > & clause )
 
 /*--------------------------------------------------------------------------*/
 
-int MiniSatSATSolver::sat_solve( const std::vector< int > & assumptions )
+int MiniSATSolver::sat_solve( const std::vector< int > & assumptions ,
+				 long conflicts )
 {
  Minisat::vec< Minisat::Lit > as;
  for( auto lit : assumptions )
   as.push( to_lit( *f_solver , lit ) );
+
+ if( conflicts >= 0 ) {
+  // a budget of its own, the time being looked at only after it
+  f_solver->setConfBudget( conflicts );
+  const auto res = f_solver->solveLimited( as );
+  f_solver->budgetOff();
+  return( res == Minisat::l_True ? 10 : ( res == Minisat::l_False ? 20 : 0 ) );
+  }
 
  if( ! ( MaxTime < Inf< double >() ) ) {
   f_solver->budgetOff();
@@ -118,7 +127,7 @@ int MiniSatSATSolver::sat_solve( const std::vector< int > & assumptions )
 
 /*--------------------------------------------------------------------------*/
 
-bool MiniSatSATSolver::sat_value( int var ) const
+bool MiniSATSolver::sat_value( int var ) const
 {
  // a variable in no clause is unknown to MiniSat, and it is false
  return( ( var <= f_solver->nVars() ) &&
@@ -127,7 +136,7 @@ bool MiniSatSATSolver::sat_value( int var ) const
 
 /*--------------------------------------------------------------------------*/
 
-bool MiniSatSATSolver::sat_failed( int lit ) const
+bool MiniSATSolver::sat_failed( int lit ) const
 {
  // the final conflict holds the negation of the failed assumptions
  const Minisat::Lit l = Minisat::mkLit( std::abs( lit ) - 1 , lit < 0 );
@@ -136,5 +145,5 @@ bool MiniSatSATSolver::sat_failed( int lit ) const
  }
 
 /*--------------------------------------------------------------------------*/
-/*--------------------- End File MiniSatSATSolver.cpp ----------------------*/
+/*----------------------- End File MiniSATSolver.cpp -----------------------*/
 /*--------------------------------------------------------------------------*/

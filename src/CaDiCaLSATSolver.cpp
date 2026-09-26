@@ -14,6 +14,9 @@
 /*------------------------------ INCLUDES ----------------------------------*/
 /*--------------------------------------------------------------------------*/
 
+#include <algorithm>
+#include <limits>
+
 #include "cadical.hpp"
 
 #include "CaDiCaLSATSolver.h"
@@ -80,10 +83,14 @@ void CaDiCaLSATSolver::sat_clause( const std::vector< int > & clause )
 
 /*--------------------------------------------------------------------------*/
 
-int CaDiCaLSATSolver::sat_solve( const std::vector< int > & assumptions )
+int CaDiCaLSATSolver::sat_solve( const std::vector< int > & assumptions ,
+				 long conflicts )
 {
  for( auto lit : assumptions )
   f_solver->assume( lit );
+ if( conflicts >= 0 )  // for the next solve() only
+  f_solver->limit( "conflicts" , int( std::min( conflicts ,
+					long( std::numeric_limits< int >::max() ) ) ) );
 
  const bool limited = MaxTime < Inf< double >();
  if( limited )

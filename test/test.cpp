@@ -367,7 +367,8 @@ static void test_modifications( void )
 
  std::vector< double > sw = { 2 , inf };
  b.chg_weights( sw , Block::Subset{ 2 , 1 } );  // not ordered
- assert( ( b.get_weights() == SATBlock::v_Weight{ inf , inf , 2 , 4 , inf } ) );
+ assert( ( b.get_weights() ==
+	   SATBlock::v_Weight{ inf , inf , 2 , 4 , inf } ) );
  assert( ! b.get_clause_constraints()[ 1 ].is_relaxed() &&
 	 b.get_clause_constraints()[ 2 ].is_relaxed() );
  // a tautology stays relaxed
@@ -742,7 +743,7 @@ int main( int argc , char ** argv )
  test_solver_satlib();
 #endif
 #ifdef SATBLOCK_HAS_MINISAT
- solver_name = "MiniSatSATSolver";
+ solver_name = "MiniSATSolver";
  test_solver();
  test_oll();
  test_solver_satlib();

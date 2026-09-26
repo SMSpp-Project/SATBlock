@@ -78,7 +78,8 @@ class CaDiCaLSATSolver : public SATSolver
 
  void sat_clause( const std::vector< int > & clause ) override;
 
- int sat_solve( const std::vector< int > & assumptions ) override;
+ int sat_solve( const std::vector< int > & assumptions ,
+		 long conflicts = -1 ) override;
 
  [[nodiscard]] bool sat_value( int var ) const override;
 

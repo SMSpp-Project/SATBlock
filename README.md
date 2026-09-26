@@ -19,7 +19,7 @@ incremental SAT solver, as `MILPSolver` is for the MILP solvers: it gives the
 SAT solver the clauses, the fixed `BooleanVariable` as assumptions (so that,
 after an unsatisfiable answer, it tells which of them are in its reason) and
 the time limit, and it gives the clauses again only after a Modification
-that changes them. `CaDiCaLSATSolver` and `MiniSatSATSolver` are the ones
+that changes them. `CaDiCaLSATSolver` and `MiniSATSolver` are the ones
 for CaDiCaL and MiniSat, each built if its SAT solver is found.
 
 
@@ -34,7 +34,7 @@ your system.
   requirements.
 - Optionally, [CaDiCaL](https://github.com/arminbiere/cadical) for
   `CaDiCaLSATSolver` (found through `CADICAL_ROOT`) and
-  [MiniSat](http://minisat.se) for `MiniSatSATSolver` (found through
+  [MiniSat](http://minisat.se) for `MiniSATSolver` (found through
   `MINISAT_ROOT`); the module is built without the ones that are not found.
 
 ### Build and install with CMake
