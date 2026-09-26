@@ -28,6 +28,7 @@
 
 #include <chrono>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "SATBlock.h"
@@ -59,25 +60,52 @@ namespace SMSpp_di_unipi_it
  * classes (CaDiCaLSATSolver, MiniSatSATSolver, ...) behave the same way,
  * as the :MILPSolver do for the MILP solvers they wrap.
  *
- * compute() gives the SAT solver the clauses of the SATBlock: those of its
- * abstract representation, if it has been generated, leaving out the
- * relaxed ClauseConstraint (a tautology among them), and those of its
- * physical representation otherwise. A BooleanVariable that is fixed [see
+ * compute() gives the SAT solver the hard clauses of the SATBlock: the
+ * ClauseConstraint of its abstract representation, if it has been
+ * generated, leaving out the relaxed ones (the soft clauses and the
+ * tautologies among them), and the hard clauses of its physical
+ * representation otherwise. The soft clauses are not given to the SAT
+ * solver, which therefore looks for a solution of the hard clauses only,
+ * whatever it costs. A BooleanVariable that is fixed [see
  * Variable::is_fixed()] is fixed at its current value by an *assumption*,
  * i.e., a literal that holds for this compute() only: when the SATBlock is
  * unsatisfiable under the assumptions, is_failed() tells which of them are
  * in the reason of it, which is what a core-guided MaxSAT algorithm needs.
  *
- * The clauses are given again to the SAT solver from scratch at the first
- * compute() after any Modification but that of a Variable being fixed or
- * unfixed, which the assumptions take care of.
+ * The SAT solver being incremental, the clauses added to the SATBlock [see
+ * SATBlock::add_clauses()] are given to it on top of those it has, and so
+ * are the weights changed [see SATBlock::chg_weights()] as long as no clause
+ * turns from hard to soft or back; a Variable being fixed or unfixed is
+ * taken care of by the assumptions. Any other Modification makes the
+ * clauses be given again to the SAT solver from scratch at the next
+ * compute().
  *
- * The status returned by compute() is kOK if the clauses are satisfiable,
- * with a solution that get_var_solution() writes into the BooleanVariable,
- * kInfeasible if they are not, kStopTime if the time limit dblMaxTime is
- * reached first, and kError if the SAT solver gives up for any other
- * reason. The SATBlock having no Objective, get_lb() and get_ub() are both 0
- * after kOK, both +INF after kInfeasible, and -INF and +INF otherwise. */
+ * The status returned by compute() is kOK if the hard clauses are
+ * satisfiable, with a solution that get_var_solution() writes into the
+ * BooleanVariable, kInfeasible if they are not, kStopTime if the time limit
+ * dblMaxTime is reached first, and kError if the SAT solver gives up for any
+ * other reason. After kOK get_lb() is 0 and get_ub() the sum of the weights
+ * of the soft clauses the solution violates, both 0 if all the clauses are
+ * hard; both are +INF after kInfeasible, and -INF and +INF otherwise.
+ *
+ * With the parameter intMaxSAT set to 1, compute() solves instead the
+ * weighted MaxSAT problem, i.e., it looks for a solution of the hard clauses
+ * minimizing the sum of the weights of the soft clauses it violates, by the
+ * core-guided algorithm OLL (Andres, Kaufmann, Matheis, Schaub, ICLP 2012;
+ * Morgado, Dodaro, Marques-Silva, CP 2014). Each soft clause is satisfied by
+ * an assumption: its literal if it is a unit clause, the negation of a new
+ * relaxation variable added to it otherwise. Each time the SAT solver finds
+ * that the assumptions cannot hold together, the soft ones in the reason
+ * (the *core*) have their weight lowered by the smallest one among them,
+ * which is added to the lower bound, and a totalizer over the core gives a
+ * new assumption, "at most one of them is violated", with that weight; when
+ * such an assumption is in a core in turn, "at most k" becomes "at most
+ * k + 1". The first solution found is optimal: after kOK get_lb() and
+ * get_ub() are both its value. After kStopTime get_lb() is the lower bound
+ * reached and get_ub() is +INF; kInfeasible means that the hard clauses are
+ * unsatisfiable, as without intMaxSAT. The clauses OLL adds are thrown away,
+ * i.e., the clauses are given again to the SAT solver at the next
+ * compute(). */
 
 class SATSolver : public Solver
 {
@@ -114,6 +142,62 @@ class SATSolver : public Solver
   return( par == dblMaxTime ? MaxTime : Solver::get_dbl_par( par ) );
   }
 
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the int parameters of SATSolver, on top of those of Solver
+
+ enum int_par_type_SATS {
+  intMaxSAT = intLastAlgPar ,  ///< 1 to solve the weighted MaxSAT by OLL
+                               /**< 0 (the default) looks for a solution of
+				* the hard clauses only, 1 for one of
+				* minimum weight of the soft clauses violated,
+				* by the algorithm OLL [see the class]. */
+  intLastAlgParSATS            ///< first new int parameter of derived classes
+  };
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// sets the int parameters, intMaxSAT included
+
+ void set_par( idx_type par , int value ) override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the number of int parameters
+
+ [[nodiscard]] idx_type get_num_int_par( void ) const override {
+  return( idx_type( intLastAlgParSATS ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the default of the int parameters, 0 for intMaxSAT
+
+ [[nodiscard]] int get_dflt_int_par( idx_type par ) const override {
+  return( par == intMaxSAT ? 0 : Solver::get_dflt_int_par( par ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the int parameters, intMaxSAT included
+
+ [[nodiscard]] int get_int_par( idx_type par ) const override {
+  return( par == intMaxSAT ? MaxSATAlg : Solver::get_int_par( par ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the index of the int parameter with the given name
+
+ [[nodiscard]] idx_type int_par_str2idx( const std::string & name )
+  const override {
+  return( name == "intMaxSAT" ? idx_type( intMaxSAT ) :
+	  Solver::int_par_str2idx( name ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the name of the int parameter with the given index
+
+ [[nodiscard]] const std::string & int_par_idx2str( idx_type idx )
+  const override {
+  static const std::string name = "intMaxSAT";
+  return( idx == intMaxSAT ? name : Solver::int_par_idx2str( idx ) );
+  }
+
 /*--------------------- METHODS FOR SOLVING THE MODEL ----------------------*/
  /// solves the SATBlock
  /** Solves the SATBlock, giving the SAT solver the clauses again if a
@@ -123,12 +207,12 @@ class SATSolver : public Solver
  int compute( bool changedvars = true ) override;
 
 /*---------------------- METHODS FOR READING RESULTS -----------------------*/
- /// 0 after kOK, +INF after kInfeasible, -INF otherwise
+ /// the lower bound: see the comments to the class
 
  [[nodiscard]] OFValue get_lb( void ) override;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// 0 after kOK, +INF after kInfeasible and otherwise
+ /// the weight of the soft clauses the solution violates, +INF if none
 
  [[nodiscard]] OFValue get_ub( void ) override;
 
@@ -177,6 +261,42 @@ class SATSolver : public Solver
  void load_clauses( void );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// gives the SAT solver the hard clauses of the SATBlock it does not have
+ /** Gives the SAT solver the hard clauses of the physical representation
+  * from the f_n_loaded-th on, i.e., those added to the SATBlock since the
+  * SAT solver had its clauses. */
+
+ void add_new_clauses( void );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// solves the weighted MaxSAT by OLL, under the given assumptions
+ /** Solves the weighted MaxSAT by OLL [see the comments to the class],
+  * \p fixed being the assumptions of the fixed BooleanVariable, which hold
+  * as hard clauses; returns the result of the last SAT call, 10, 20 or 0
+  * [see sat_solve()], setting f_lb, and v_failed after 20. */
+
+ int oll( const std::vector< int > & fixed );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// builds the tree of a totalizer over the given literals, no clause yet
+ /** Builds the tree of a totalizer over the literals \p ins[ lo , hi ),
+  * returning the index of its root in v_tot; the outputs are made, with
+  * their clauses, by tot_extend(). */
+
+ int tot_build( const std::vector< int > & ins , std::size_t lo ,
+		std::size_t hi );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// makes the first k outputs of a node of a totalizer, with their clauses
+ /** Makes the first \p k outputs of the node \p node of a totalizer (all of
+  * them if they are fewer), the j-th output being implied by at least j + 1
+  * of the literals under the node being true: only the implications from
+  * the literals to the outputs are there, which is what an assumption "the
+  * output is false" needs. */
+
+ void tot_extend( int node , std::size_t k );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// true if the time limit dblMaxTime of the running compute() is reached
 
  [[nodiscard]] bool time_is_up( void ) const;
@@ -217,6 +337,26 @@ class SATSolver : public Solver
  bool f_has_sat = false;       ///< if the SAT solver has been created
 
  bool f_reload = true;         ///< if the clauses have to be given again
+
+ std::vector< unsigned char > v_hard;  ///< which clauses the SAT solver has
+
+ double f_ub = Inf< double >();  ///< the weight violated by the solution
+
+ double f_lb = - Inf< double >();  ///< the lower bound of the last compute()
+
+ int MaxSATAlg = 0;            ///< the parameter intMaxSAT
+
+ int f_next_var = 0;           ///< the last variable of the SAT solver
+
+ /// a node of a totalizer: a literal if a leaf, two children otherwise
+ struct TotNode {
+  int left = -1;               ///< the left child, -1 if a leaf
+  int right = -1;              ///< the right child, -1 if a leaf
+  std::size_t size = 1;        ///< the number of literals under the node
+  std::vector< int > out;      ///< the outputs made so far
+  };
+
+ std::vector< TotNode > v_tot;  ///< the nodes of all the totalizers
 
  int f_status = kUnEval;       ///< status of the last compute()
 

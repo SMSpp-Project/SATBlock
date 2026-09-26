@@ -33,3 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the SATLIB instances in `data/cnf`, with the scripts that compress and
   upload them as the other modules do; the test checks that the uniform
   random families and the aim ones are satisfiable or not as their name says
+- the weighted partial MaxSAT in `SATBlock`: a weight per clause, +INF for
+  the hard ones, read from the WCNF formats (the one up to 2021 with its top
+  weight and the one from 2022 on) and written back to the latter, and in
+  netCDF; a soft clause is a relaxed `ClauseConstraint` with its literals,
+  `is_feasible()` looks at the hard clauses and `get_violated_weight()` at
+  the soft ones
+- the physical Modification of `SATBlock`: `chg_weights()` on a Range or a
+  Subset, relaxing or enforcing the clauses that turn soft or hard, and
+  `add_clauses()`, whose `ClauseConstraint` join a dynamic group, with
+  `SATBlockMod`, `SATBlockRngdMod` and `SATBlockSbstMod`
+- `SATSolver` gives the SAT solver the hard clauses only, the clauses added
+  on top of those it has, and reports as upper bound the weight of the soft
+  clauses its solution violates; with `intMaxSAT` = 1 it solves the weighted
+  MaxSAT by the core-guided algorithm OLL, with incremental totalizers, the
+  test checking it against the enumeration on random instances

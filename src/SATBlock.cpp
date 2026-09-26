@@ -17,7 +17,11 @@
 /*--------------------------------------------------------------------------*/
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
+#include <iomanip>
+#include <limits>
+#include <numeric>
 #include <sstream>
 
 #include "BooleanVariableSolution.h"
@@ -41,9 +45,10 @@ SMSpp_insert_in_factory_cpp_1( SATBlock );
 /*------------------------- OTHER INITIALIZATIONS --------------------------*/
 /*--------------------------------------------------------------------------*/
 
-void SATBlock::normalize_clauses( void )
+void SATBlock::normalize_clauses( unsigned int first )
 {
- for( auto & clause : v_clauses ) {
+ for( auto it = v_clauses.begin() + first ; it != v_clauses.end() ; ++it ) {
+  auto & clause = *it;
   Clause kept;
   kept.reserve( clause.size() );
   for( auto lit : clause ) {
@@ -59,13 +64,37 @@ void SATBlock::normalize_clauses( void )
 
 /*--------------------------------------------------------------------------*/
 
-void SATBlock::load( unsigned int n_var , v_Clause && clauses )
+void SATBlock::check_weights( unsigned int first ) const
 {
+ for( auto i = first ; i < v_weights.size() ; ++i )
+  if( std::isnan( v_weights[ i ] ) || ( v_weights[ i ] < 0 ) )
+   throw( std::invalid_argument( "SATBlock::check_weights: weight " +
+				 std::to_string( v_weights[ i ] ) +
+				 " of clause " + std::to_string( i ) ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::load( unsigned int n_var , v_Clause && clauses ,
+		     v_Weight && weights )
+{
+ if( ( ! weights.empty() ) && ( weights.size() != clauses.size() ) )
+  throw( std::invalid_argument( "SATBlock::load: " +
+				std::to_string( weights.size() ) +
+				" weights for " +
+				std::to_string( clauses.size() ) +
+				" clauses" ) );
+
  guts_of_destructor();
 
  f_n_var = n_var;
  v_clauses = std::move( clauses );
  normalize_clauses();
+ if( weights.empty() )
+  v_weights.assign( v_clauses.size() , Inf< double >() );
+ else
+  v_weights = std::move( weights );
+ check_weights();
 
  if( anyone_there() )
   add_Modification( std::make_shared< NBModification >( this ) );
@@ -75,55 +104,140 @@ void SATBlock::load( unsigned int n_var , v_Clause && clauses )
 
 void SATBlock::load( std::istream & input , char frmt )
 {
- if( ( frmt != 0 ) && ( frmt != 'D' ) )
+ if( ( frmt != 0 ) && ( frmt != 'D' ) && ( frmt != 'W' ) )
   throw( std::invalid_argument( std::string( "SATBlock::load: unknown "
 					     "format " ) + frmt ) );
 
- // the header "p cnf <n> <m>", after any comment line
+ // the first line that is not a comment: either the "p" line, or the first
+ // clause of a WCNF file from 2022 on
  std::string line;
- long n = -1 , m = -1;
+ std::istringstream ls;
+ std::string tok;
+ bool found = false;
  while( std::getline( input , line ) ) {
-  std::istringstream ls( line );
-  std::string tok;
-  if( ! ( ls >> tok ) || ( tok[ 0 ] == 'c' ) )
-   continue;
-  std::string fmt;
-  if( ( tok != "p" ) || ! ( ls >> fmt >> n >> m ) || ( fmt != "cnf" ) ||
-      ( n < 0 ) || ( m < 0 ) )
-   throw( std::invalid_argument( "SATBlock::load: expected \"p cnf <n> "
-				 "<m>\", found \"" + line + "\"" ) );
-  break;
-  }
- if( n < 0 )
-  throw( std::invalid_argument( "SATBlock::load: no \"p cnf\" line" ) );
-
- // the m clauses, each ended by a 0, possibly spanning several lines
- v_Clause clauses;
- clauses.reserve( m );
- Clause current;
- while( ( long( clauses.size() ) < m ) && std::getline( input , line ) ) {
-  std::istringstream ls( line );
-  std::string tok;
-  if( ! ( ls >> tok ) || ( tok[ 0 ] == 'c' ) )
-   continue;
-  if( tok[ 0 ] == '%' )
+  ls.clear();
+  ls.str( line );
+  if( ( ls >> tok ) && ( tok[ 0 ] != 'c' ) ) {
+   found = true;
    break;
+   }
+  }
+ if( ! found )
+  throw( std::invalid_argument( "SATBlock::load: no \"p\" line nor clause" ) );
+
+ // reads the literals of a clause out of ls, tok being the first one
+ auto read_clause = [ & ]( Clause & clause ) {
   do {
    char * end;
    const long lit = std::strtol( tok.c_str() , & end , 10 );
    if( *end )
     throw( std::invalid_argument( "SATBlock::load: \"" + tok +
 				  "\" is not a literal" ) );
-   if( lit == 0 ) {
-    clauses.push_back( std::move( current ) );
-    current.clear();
-    if( long( clauses.size() ) == m )
-     break;
-    }
-   else
-    current.push_back( int( lit ) );
+   if( lit == 0 )
+    return( true );
+   clause.push_back( int( lit ) );
    }
   while( ls >> tok );
+  return( false );
+  };
+
+ // reads a weight out of tok
+ auto read_weight = [ & ]( void ) {
+  char * end;
+  const double w = std::strtod( tok.c_str() , & end );
+  if( *end )
+   throw( std::invalid_argument( "SATBlock::load: \"" + tok +
+				 "\" is not a weight" ) );
+  return( w );
+  };
+
+ v_Clause clauses;
+ v_Weight weights;
+
+ if( tok != "p" ) {
+  // WCNF from 2022 on: one clause per line, "h" or the weight first
+  if( frmt == 'D' )
+   throw( std::invalid_argument( "SATBlock::load: expected \"p cnf <n> "
+				 "<m>\", found \"" + line + "\"" ) );
+  long n = 0;
+  for( bool more = true ; more ; ) {
+   // ls holds a clause, and tok its first token
+   const double w = ( tok == "h" ) ? Inf< double >() : read_weight();
+   Clause clause;
+   if( ! ( ( ls >> tok ) && read_clause( clause ) ) )
+    throw( std::invalid_argument( "SATBlock::load: clause not ended by 0 "
+				  "in \"" + line + "\"" ) );
+   for( auto lit : clause )
+    n = std::max( n , long( std::abs( lit ) ) );
+   clauses.push_back( std::move( clause ) );
+   weights.push_back( w );
+
+   // the next line that is not a comment, if any
+   more = false;
+   while( std::getline( input , line ) ) {
+    ls.clear();
+    ls.str( line );
+    if( ( ls >> tok ) && ( tok[ 0 ] != 'c' ) ) {
+     more = true;
+     break;
+     }
+    }
+   }
+
+  load( unsigned( n ) , std::move( clauses ) , std::move( weights ) );
+  return;
+  }
+
+ // the "p" line
+ std::string fmt;
+ long n = -1 , m = -1;
+ if( ! ( ls >> fmt >> n >> m ) || ( n < 0 ) || ( m < 0 ) ||
+     ( ( fmt != "cnf" ) && ( fmt != "wcnf" ) ) ||
+     ( ( fmt == "cnf" ) && ( frmt == 'W' ) ) ||
+     ( ( fmt == "wcnf" ) && ( frmt == 'D' ) ) )
+  throw( std::invalid_argument( "SATBlock::load: wrong \"p\" line \"" +
+				line + "\"" ) );
+ clauses.reserve( m );
+
+ if( fmt == "wcnf" ) {
+  // WCNF up to 2021: one clause per line, the weight first, hard if it is
+  // at least top, if any
+  double top = Inf< double >();
+  if( ls >> tok )
+   top = read_weight();
+  weights.reserve( m );
+  while( ( long( clauses.size() ) < m ) && std::getline( input , line ) ) {
+   ls.clear();
+   ls.str( line );
+   if( ! ( ls >> tok ) || ( tok[ 0 ] == 'c' ) )
+    continue;
+   const double w = read_weight();
+   Clause clause;
+   if( ! ( ( ls >> tok ) && read_clause( clause ) ) )
+    throw( std::invalid_argument( "SATBlock::load: clause not ended by 0 "
+				  "in \"" + line + "\"" ) );
+   clauses.push_back( std::move( clause ) );
+   weights.push_back( w >= top ? Inf< double >() : w );
+   }
+  }
+ else {
+  // DIMACS CNF: the m clauses, each ended by a 0, possibly spanning several
+  // lines
+  Clause current;
+  while( ( long( clauses.size() ) < m ) && std::getline( input , line ) ) {
+   ls.clear();
+   ls.str( line );
+   if( ! ( ls >> tok ) || ( tok[ 0 ] == 'c' ) )
+    continue;
+   if( tok[ 0 ] == '%' )
+    break;
+   while( read_clause( current ) ) {
+    clauses.push_back( std::move( current ) );
+    current.clear();
+    if( ( long( clauses.size() ) == m ) || ! ( ls >> tok ) )
+     break;
+    }
+   }
   }
 
  if( long( clauses.size() ) < m )
@@ -132,7 +246,7 @@ void SATBlock::load( std::istream & input , char frmt )
 				" clauses found, " + std::to_string( m ) +
 				" declared" ) );
 
- load( unsigned( n ) , std::move( clauses ) );
+ load( unsigned( n ) , std::move( clauses ) , std::move( weights ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -150,6 +264,16 @@ void SATBlock::deserialize( const netCDF::NcGroup & group )
  ::deserialize< int >( group , "Clauses" , "ClausesStart" , v_clauses );
 
  normalize_clauses();
+
+ v_weights.assign( v_clauses.size() , Inf< double >() );
+ auto w = group.getVar( "Weights" );
+ if( ( ! w.isNull() ) && ( ! v_clauses.empty() ) ) {
+  if( w.getDimCount() != 1 || w.getDim( 0 ).getSize() != v_clauses.size() )
+   throw( std::invalid_argument( "SATBlock::deserialize: Weights must have "
+				 "one element per clause" ) );
+  w.getVar( v_weights.data() );
+  }
+ check_weights();
 
  Block::deserialize( group );
  }
@@ -173,6 +297,24 @@ void SATBlock::generate_abstract_variables( Configuration * stvv )
 /*-------------------- Methods for handling Constraint ---------------------*/
 /*--------------------------------------------------------------------------*/
 
+void SATBlock::set_clause_constraint( ClauseConstraint & c , unsigned int i )
+{
+ if( is_tautology( i ) ) {
+  // always satisfied: a relaxed ClauseConstraint with no literals
+  c.relax( true , eNoMod );
+  return;
+  }
+ ClauseConstraint::v_Literal lits;
+ lits.reserve( v_clauses[ i ].size() );
+ for( auto lit : v_clauses[ i ] )
+  lits.emplace_back( & v_x[ std::abs( lit ) - 1 ] , lit < 0 );
+ c.set_literals( std::move( lits ) , eNoMod );
+ if( ! is_hard( i ) )  // a soft clause does not have to be satisfied
+  c.relax( true , eNoMod );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 void SATBlock::generate_abstract_constraints( Configuration * stcc )
 {
  if( AR & HasCns )  // the Constraint are there already
@@ -181,26 +323,34 @@ void SATBlock::generate_abstract_constraints( Configuration * stcc )
  generate_abstract_variables();
 
  v_c = std::vector< ClauseConstraint >( v_clauses.size() );
- for( unsigned int i = 0 ; i < v_clauses.size() ; ++i ) {
-  if( is_tautology( i ) ) {
-   // always satisfied: a relaxed ClauseConstraint with no literals
-   v_c[ i ].relax( true , eNoMod );
-   continue;
-   }
-  ClauseConstraint::v_Literal lits;
-  lits.reserve( v_clauses[ i ].size() );
-  for( auto lit : v_clauses[ i ] )
-   lits.emplace_back( & v_x[ std::abs( lit ) - 1 ] , lit < 0 );
-  v_c[ i ].set_literals( std::move( lits ) , eNoMod );
-  }
+ for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
+  set_clause_constraint( v_c[ i ] , i );
 
  add_static_constraint( v_c , "clauses" );
+ add_dynamic_constraint( l_c , "added clauses" );
 
  AR |= HasCns;
  }
 
 /*--------------------------------------------------------------------------*/
+
+ClauseConstraint & SATBlock::clause_constraint( unsigned int i )
+{
+ if( i < v_c.size() )
+  return( v_c[ i ] );
+ return( *std::next( l_c.begin() , i - v_c.size() ) );
+ }
+
+/*--------------------------------------------------------------------------*/
 /*------------------ Methods for reading the data of the SATBlock ----------*/
+/*--------------------------------------------------------------------------*/
+
+bool SATBlock::all_hard( void ) const
+{
+ return( std::all_of( v_weights.begin() , v_weights.end() ,
+		      []( double w ) { return( w == Inf< double >() ); } ) );
+ }
+
 /*--------------------------------------------------------------------------*/
 
 bool SATBlock::is_tautology( unsigned int i ) const
@@ -221,12 +371,33 @@ bool SATBlock::is_feasible( bool useabstract , Configuration * fsbc )
   throw( std::logic_error( "SATBlock::is_feasible: the BooleanVariable have "
 			   "not been generated" ) );
 
- for( const auto & clause : v_clauses )
-  if( std::none_of( clause.begin() , clause.end() , [ this ]( int lit ) {
+ for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
+  if( is_hard( i ) &&
+      std::none_of( v_clauses[ i ].begin() , v_clauses[ i ].end() ,
+		    [ this ]( int lit ) {
        return( v_x[ std::abs( lit ) - 1 ].get_value() == ( lit > 0 ) ); } ) )
    return( false );
 
  return( true );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+double SATBlock::get_violated_weight( void ) const
+{
+ if( v_x.size() != f_n_var )
+  throw( std::logic_error( "SATBlock::get_violated_weight: the "
+			   "BooleanVariable have not been generated" ) );
+
+ double sum = 0;
+ for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
+  if( ( ! is_hard( i ) ) &&
+      std::none_of( v_clauses[ i ].begin() , v_clauses[ i ].end() ,
+		    [ this ]( int lit ) {
+       return( v_x[ std::abs( lit ) - 1 ].get_value() == ( lit > 0 ) ); } ) )
+   sum += v_weights[ i ];
+
+ return( sum );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -260,6 +431,10 @@ void SATBlock::serialize( netCDF::NcGroup & group ) const
  auto nl = group.addDim( "NumberLiterals" , n_lit );
  ::serialize< int >( group , "Clauses" , netCDF::NcInt() , "ClausesStart" ,
 		     v_clauses , nl , nc );
+
+ if( ! all_hard() )
+  group.addVar( "Weights" , netCDF::NcDouble() , nc ).putVar(
+							  v_weights.data() );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -272,12 +447,175 @@ void SATBlock::print( std::ostream & output , char vlvl ) const
   return;
   }
 
- output << "p cnf " << f_n_var << " " << v_clauses.size() << std::endl;
- for( const auto & clause : v_clauses ) {
-  for( auto lit : clause )
+ // all hard: DIMACS CNF, otherwise WCNF in the format from 2022 on
+ const bool cnf = all_hard();
+ if( cnf )
+  output << "p cnf " << f_n_var << " " << v_clauses.size() << std::endl;
+ const auto prec = output.precision(
+			     std::numeric_limits< double >::max_digits10 );
+ for( unsigned int i = 0 ; i < v_clauses.size() ; ++i ) {
+  if( ! cnf ) {
+   if( is_hard( i ) )
+    output << "h ";
+   else
+    output << v_weights[ i ] << " ";
+   }
+  for( auto lit : v_clauses[ i ] )
    output << lit << " ";
   output << "0" << std::endl;
   }
+ output.precision( prec );
+ }
+
+/*--------------------------------------------------------------------------*/
+/*----------- METHODS FOR MODIFYING THE PHYSICAL REPRESENTATION ------------*/
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::set_weight( unsigned int i , double w , ModParam issueAMod )
+{
+ const bool was_hard = is_hard( i );
+ v_weights[ i ] = w;
+ if( ( ! ( AR & HasCns ) ) || ( was_hard == is_hard( i ) ) ||
+     is_tautology( i ) || ( ! not_dry_run( issueAMod ) ) )
+  return;
+
+ // the abstract representation: a soft clause is relaxed, a hard one not
+ clause_constraint( i ).relax( ! is_hard( i ) , un_ModBlock( issueAMod ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
+			    ModParam issueMod , ModParam issueAMod )
+{
+ rng.second = std::min( rng.second , Index( v_clauses.size() ) );
+ if( rng.second <= rng.first )  // nothing to change
+  return;
+
+ if( NWeight.size() < rng.second - rng.first )
+  throw( std::invalid_argument( "SATBlock::chg_weights: the span is shorter "
+				"than the Range" ) );
+
+ if( std::equal( NWeight.begin() , NWeight.begin() +
+		 ( rng.second - rng.first ) , v_weights.begin() + rng.first ) )
+  return;  // nothing changes, avoid issuing the Modification
+
+ for( Index i = rng.first ; i < rng.second ; ++i )
+  if( std::isnan( NWeight[ i - rng.first ] ) ||
+      ( NWeight[ i - rng.first ] < 0 ) )
+   throw( std::invalid_argument( "SATBlock::chg_weights: weight " +
+				 std::to_string( NWeight[ i - rng.first ] ) +
+				 " of clause " + std::to_string( i ) ) );
+
+ if( not_dry_run( issueMod ) )
+  for( Index i = rng.first ; i < rng.second ; ++i )
+   set_weight( i , NWeight[ i - rng.first ] , issueAMod );
+
+ if( issue_pmod( issueMod ) )
+  add_Modification( std::make_shared< SATBlockRngdMod >( this ,
+					SATBlockMod::eChgWeight , rng ) ,
+		    Observer::par2chnl( issueMod ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
+			    ModParam issueMod , ModParam issueAMod )
+{
+ if( nms.empty() )  // nothing to change
+  return;
+
+ if( NWeight.size() < nms.size() )
+  throw( std::invalid_argument( "SATBlock::chg_weights: the span is shorter "
+				"than the Subset" ) );
+
+ // the Subset ordered, with its weights
+ std::vector< std::pair< Index , double > > nw( nms.size() );
+ for( Index k = 0 ; k < nms.size() ; ++k ) {
+  if( nms[ k ] >= v_clauses.size() )
+   throw( std::invalid_argument( "SATBlock::chg_weights: clause " +
+				 std::to_string( nms[ k ] ) +
+				 " does not exist" ) );
+  if( std::isnan( NWeight[ k ] ) || ( NWeight[ k ] < 0 ) )
+   throw( std::invalid_argument( "SATBlock::chg_weights: weight " +
+				 std::to_string( NWeight[ k ] ) +
+				 " of clause " + std::to_string( nms[ k ] ) ) );
+  nw[ k ] = { nms[ k ] , NWeight[ k ] };
+  }
+ if( ! ordered )
+  std::sort( nw.begin() , nw.end() , []( const auto & a , const auto & b ) {
+   return( a.first < b.first ); } );
+
+ if( std::all_of( nw.begin() , nw.end() , [ this ]( const auto & p ) {
+      return( v_weights[ p.first ] == p.second ); } ) )
+  return;  // nothing changes, avoid issuing the Modification
+
+ if( not_dry_run( issueMod ) )
+  for( const auto & [ i , w ] : nw )
+   set_weight( i , w , issueAMod );
+
+ if( issue_pmod( issueMod ) ) {
+  for( Index k = 0 ; k < nw.size() ; ++k )
+   nms[ k ] = nw[ k ].first;
+  add_Modification( std::make_shared< SATBlockSbstMod >( this ,
+			     SATBlockMod::eChgWeight , std::move( nms ) ) ,
+		    Observer::par2chnl( issueMod ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
+			    ModParam issueMod , ModParam issueAMod )
+{
+ if( clauses.empty() )  // nothing to add
+  return;
+
+ if( ( ! weights.empty() ) && ( weights.size() != clauses.size() ) )
+  throw( std::invalid_argument( "SATBlock::add_clauses: " +
+				std::to_string( weights.size() ) +
+				" weights for " +
+				std::to_string( clauses.size() ) +
+				" clauses" ) );
+
+ if( ! not_dry_run( issueMod ) )
+  return;
+
+ const Index first = v_clauses.size();
+ const auto n_new = clauses.size();
+
+ // the physical representation, left as it was if anything is wrong
+ v_clauses.insert( v_clauses.end() ,
+		   std::make_move_iterator( clauses.begin() ) ,
+		   std::make_move_iterator( clauses.end() ) );
+ if( weights.empty() )
+  v_weights.resize( v_clauses.size() , Inf< double >() );
+ else
+  v_weights.insert( v_weights.end() , weights.begin() , weights.end() );
+ try {
+  normalize_clauses( first );
+  check_weights( first );
+  }
+ catch( ... ) {
+  v_clauses.resize( first );
+  v_weights.resize( first );
+  throw;
+  }
+
+ // the abstract representation
+ if( ( AR & HasCns ) && not_dry_run( issueAMod ) ) {
+  l_ClauseConstraint nl( n_new );
+  Index i = first;
+  for( auto & c : nl )
+   set_clause_constraint( c , i++ );
+  add_dynamic_constraints( l_c , nl , un_ModBlock( issueAMod ) );
+  }
+
+ if( issue_pmod( issueMod ) )
+  add_Modification( std::make_shared< SATBlockRngdMod >( this ,
+			     SATBlockMod::eAddClauses ,
+			     Range( first , v_clauses.size() ) ) ,
+		    Observer::par2chnl( issueMod ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -288,13 +626,18 @@ void SATBlock::guts_of_destructor( void )
  // and are told not to bother with them, both going away together
  for( auto & c : v_c )
   c.clear();
+ for( auto & c : l_c )
+  c.clear();
 
+ reset_dynamic_constraints();
  reset_static_constraints();
  reset_static_variables();
+ l_c.clear();
  v_c.clear();
  v_x.clear();
 
  v_clauses.clear();
+ v_weights.clear();
  f_n_var = 0;
  AR = 0;
  }
