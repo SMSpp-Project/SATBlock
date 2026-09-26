@@ -203,6 +203,7 @@ int SATSolver::compute( bool changedvars )
 
  v_failed.assign( f_sat->get_number_variables() , 0 );
  f_ub = Inf< double >();
+ v_model.clear();
 
  int res;
  if( MaxSATAlg == 1 )
@@ -219,6 +220,8 @@ int SATSolver::compute( bool changedvars )
  switch( res ) {
   case( 10 ): {
    f_status = kOK;
+   if( MaxSATAlg == 1 )  // OLL has it already
+    break;
    // the weight of the soft clauses the solution violates
    const auto & clauses = f_sat->get_clauses();
    const auto & w = f_sat->get_weights();
@@ -352,15 +355,71 @@ int SATSolver::oll( const std::vector< int > & fixed )
     }
   }
 
+ // the stratification: the assumptions weighing at least tau are given to
+ // the SAT solver; lower_level() lowers tau to take the next weights, until
+ // the assumptions are at least 1.25 per distinct weight, returning false
+ // if all of them are there already
+ double tau = Inf< double >();
+ auto lower_level = [ & ]( void ) {
+  std::vector< double > ws;
+  for( auto lit : order )
+   if( soft[ lit ].w > 0 )
+    ws.push_back( soft[ lit ].w );
+  std::sort( ws.begin() , ws.end() , std::greater< double >() );
+  std::size_t i = std::find_if( ws.begin() , ws.end() , [ tau ]( double w ) {
+   return( w < tau ); } ) - ws.begin();
+  if( i == ws.size() )
+   return( false );
+  std::size_t distinct = 0;
+  for( std::size_t j = 0 ; j < i ; ++j )
+   if( ( j == 0 ) || ( ws[ j ] != ws[ j - 1 ] ) )
+    ++distinct;
+  do {
+   tau = ws[ i ];
+   ++distinct;
+   while( ( i < ws.size() ) && ( ws[ i ] == tau ) )
+    ++i;
+   }
+  while( ( i < ws.size() ) && ( double( i ) < 1.25 * double( distinct ) ) );
+  return( true );
+  };
+
+ // the weight of the soft clauses the current solution violates
+ auto model_cost = [ & ]( void ) {
+  double cost = 0;
+  for( unsigned int i = 0 ; i < clauses.size() ; ++i )
+   if( ( ! f_sat->is_hard( i ) ) &&
+       std::none_of( clauses[ i ].begin() , clauses[ i ].end() ,
+		     [ this ]( int lit ) {
+	return( sat_value( std::abs( lit ) ) == ( lit > 0 ) ); } ) )
+    cost += weights[ i ];
+  return( cost );
+  };
+
+ lower_level();
+
  std::vector< int > as;
  std::vector< int > core;
  for( ; ; ) {
   as = fixed;
   for( auto lit : order )
-   if( soft[ lit ].w > 0 )
+   if( ( soft[ lit ].w > 0 ) && ( soft[ lit ].w >= tau ) )
     as.push_back( lit );
 
   const int res = sat_solve( as );
+  if( res == 10 ) {
+   // an upper bound, the optimum if all the assumptions are there
+   const double cost = model_cost();
+   if( cost < f_ub ) {
+    f_ub = cost;
+    v_model.resize( f_sat->get_number_variables() );
+    for( unsigned int i = 0 ; i < v_model.size() ; ++i )
+     v_model[ i ] = sat_value( int( i + 1 ) ) ? 1 : 0;
+    }
+   if( ! lower_level() )  // f_lb == f_ub, up to the rounding of the weights
+    return( 10 );
+   continue;
+   }
   if( res != 20 )
    return( res );
 
@@ -435,13 +494,14 @@ Solver::OFValue SATSolver::get_ub( void )
 
 void SATSolver::get_var_solution( Configuration * solc )
 {
- if( f_status != kOK )
+ if( ! has_var_solution() )
   throw( std::logic_error( "SATSolver::get_var_solution: no solution" ) );
 
  f_sat->generate_abstract_variables();
  auto & x = f_sat->get_variables();
  for( unsigned int i = 0 ; i < x.size() ; ++i )
-  x[ i ].set_value( sat_value( int( i + 1 ) ) );
+  x[ i ].set_value( v_model.empty() ? sat_value( int( i + 1 ) )
+		                    : bool( v_model[ i ] ) );
  }
 
 /*--------------------------------------------------------------------------*/

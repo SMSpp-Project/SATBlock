@@ -606,6 +606,15 @@ static void test_oll( void )
   assert( s->is_failed( 0 ) && s->is_failed( 1 ) );
   x[ 0 ].is_fixed( false ); x[ 1 ].is_fixed( false );
 
+  // a time limit of 0 stops OLL as soon as the SAT solver looks at the
+  // time, which MiniSat does after a budget of conflicts: if it stops before
+  // any solution, there is none to write
+  s->set_par( Solver::dblMaxTime , 0.0 );
+  if( s->compute() == Solver::kStopTime )
+   assert( ( s->get_ub() == Inf< Solver::OFValue >() ) ==
+	   ! s->has_var_solution() );
+  s->set_par( Solver::dblMaxTime , Inf< double >() );
+
   // the same SATSolver goes back to the hard clauses only
   s->set_par( SATSolver::intMaxSAT , 0 );
   assert( s->compute() == Solver::kOK );

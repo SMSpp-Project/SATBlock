@@ -100,12 +100,23 @@ namespace SMSpp_di_unipi_it
  * which is added to the lower bound, and a totalizer over the core gives a
  * new assumption, "at most one of them is violated", with that weight; when
  * such an assumption is in a core in turn, "at most k" becomes "at most
- * k + 1". The first solution found is optimal: after kOK get_lb() and
- * get_ub() are both its value. After kStopTime get_lb() is the lower bound
- * reached and get_ub() is +INF; kInfeasible means that the hard clauses are
- * unsatisfiable, as without intMaxSAT. The clauses OLL adds are thrown away,
- * i.e., the clauses are given again to the SAT solver at the next
- * compute(). */
+ * k + 1".
+ *
+ * The assumptions are *stratified* by weight (Ansotegui, Bonet, Gabas,
+ * Levy, SAT 2012): only those whose weight is at least a threshold are
+ * given to the SAT solver, starting from the largest weights, and when they
+ * hold together the threshold goes down, taking the next weights until the
+ * assumptions are at least 1.25 per distinct weight, or all of them. The
+ * cores are then found among the heavy soft clauses first, and each
+ * solution found on the way is an upper bound; the solution found with all
+ * the assumptions is optimal.
+ *
+ * After kOK get_lb() and get_ub() are both the optimal value. After
+ * kStopTime get_lb() is the lower bound reached and get_ub() the value of
+ * the best solution found, +INF if none, which get_var_solution() writes;
+ * kInfeasible means that the hard clauses are unsatisfiable, as without
+ * intMaxSAT. The clauses OLL adds are thrown away, i.e., the clauses are
+ * given again to the SAT solver at the next compute(). */
 
 class SATSolver : public Solver
 {
@@ -220,7 +231,8 @@ class SATSolver : public Solver
  /// true if the last compute() has found a solution
 
  [[nodiscard]] bool has_var_solution( void ) override {
-  return( f_status == kOK );
+  return( ( f_status == kOK ) ||
+	  ( ( f_status == kStopTime ) && ( ! v_model.empty() ) ) );
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -347,6 +359,9 @@ class SATSolver : public Solver
  int MaxSATAlg = 0;            ///< the parameter intMaxSAT
 
  int f_next_var = 0;           ///< the last variable of the SAT solver
+
+ /// the best solution found by OLL, empty if none
+ std::vector< unsigned char > v_model;
 
  /// a node of a totalizer: a literal if a leaf, two children otherwise
  struct TotNode {
