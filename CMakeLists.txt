@@ -227,6 +227,10 @@ if (BUILD_TESTING)
     add_subdirectory(test)
 endif ()
 
+# ----- Subdirectories ------------------------------------------------------ #
+# after the tests, so that the test of the tools is registered with CTest
+add_subdirectory(tools)
+
 # ----- Install instructions ------------------------------------------------ #
 # The following commands are used when installing the library
 # and its CMake configuration files on the system.

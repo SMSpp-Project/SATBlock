@@ -48,3 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clauses its solution violates; with `intMaxSAT` = 1 it solves the weighted
   MaxSAT by the core-guided algorithm OLL, with incremental totalizers, the
   test checking it against the enumeration on random instances
+- `smspp_satgen`, the generator of random weighted partial MaxSAT instances
+  made of groups of variables with their own hard and soft clauses, bound by
+  a tunable fraction of hard linking clauses, possibly with a planted
+  assignment that makes the hard clauses satisfiable, written as WCNF or as a
+  netCDF `SATBlock`; the same seed gives the same instance with any compiler
