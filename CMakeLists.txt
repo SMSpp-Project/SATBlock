@@ -218,6 +218,74 @@ target_link_libraries(${modName} PUBLIC ${modNamespace}::SMS++)
 # the library with this notation.
 add_library(${modNamespace}::${modName} ALIAS ${modName})
 
+# ----- Data ---------------------------------------------------------------- #
+# The instances the tests read, in two archives of the GitLab Package
+# Registry: cnf.tgz, a selection of the SATLIB collection, and wcnf.tgz, the
+# smallest instance of each family of the exact weighted track of the MaxSAT
+# Evaluation 2024 with the optimum RC2 finds for it [see data/wcnf/README].
+# Each is downloaded and extracted into data/ once per version.
+
+# The version of the archives in the Package Registry. A published version is
+# never replaced: new data go out under a new version, written here first [see
+# data/upload], and the archives and the markers of their extraction carry it
+# in their name, so that a tree holding the data of an older version (a cache
+# of the CI, or a clone that has been extracted before) downloads and extracts
+# again instead of taking them for the current ones.
+set(DATA_VERSION 2026-09-26)
+
+if (UNIX)
+    set(TAR_FLAGS --warning=no-unknown-keyword -xzf)
+elseif (WIN32)
+    set(TAR_FLAGS xzf)
+endif ()
+
+set(DATA_MARKERS)
+foreach (fmt cnf wcnf)
+    set(url "https://gitlab.com/api/v4/projects/86936161/packages/generic/${fmt}/${DATA_VERSION}/${fmt}.tgz")
+    set(archive ${CMAKE_CURRENT_SOURCE_DIR}/data/${fmt}-${DATA_VERSION}.tgz)
+    set(marker ${CMAKE_CURRENT_SOURCE_DIR}/data/.extracted-${fmt}-${DATA_VERSION})
+    set(script ${CMAKE_CURRENT_BINARY_DIR}/download_sat_${fmt}.cmake)
+
+    file(WRITE ${script} "
+file(DOWNLOAD \"${url}\" \"${archive}\" SHOW_PROGRESS STATUS _status)
+list(GET _status 0 _code)
+list(GET _status 1 _message)
+if(NOT _code EQUAL 0)
+  # what is on disk is whatever the server answered with, and leaving it there
+  # would let the build take it for the archive: the next attempt has to
+  # download again rather than fail while extracting it
+  file(REMOVE \"${archive}\")
+  message(FATAL_ERROR \"cannot download ${url}: \${_message}\")
+endif()
+file(SIZE \"${archive}\" _size)
+if(_size LESS 1024)
+  file(REMOVE \"${archive}\")
+  message(FATAL_ERROR \"${archive} came down with \${_size} bytes, so the \
+server answered but not with the archive: try again later\")
+endif()
+")
+
+    add_custom_command(
+            OUTPUT ${archive}
+            COMMAND ${CMAKE_COMMAND} -P ${script}
+            COMMENT "Downloading ${fmt}.tgz from the GitLab Package Registry"
+            VERBATIM)
+
+    add_custom_command(
+            OUTPUT ${marker}
+            COMMAND tar ${TAR_FLAGS} ${archive}
+            COMMAND ${CMAKE_COMMAND} -E touch ${marker}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+            COMMENT "Extracting ${fmt}.tgz"
+            VERBATIM
+            DEPENDS ${archive})
+
+    list(APPEND DATA_MARKERS ${marker})
+endforeach ()
+
+# the target the test depends on: both archives downloaded and extracted
+add_custom_target(fetch_sat_data DEPENDS ${DATA_MARKERS})
+
 # ----- Tests --------------------------------------------------------------- #
 if (BUILD_TESTING)
     # enable testing in this directory's scope: the umbrella calls

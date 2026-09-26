@@ -6,7 +6,8 @@
  * hand-made cases and on an instance of the SATLIB collection, the abstract
  * representation, the feasibility check and the violated weight, the
  * Solution, the round trips through netCDF and through the writer, the
- * changes of the weights and the added clauses, and the SATSolver.
+ * changes of the weights and the added clauses, and the SATSolver, OLL
+ * included, on random instances and on instances of the MaxSAT Evaluation.
  *
  * \author Donato Meoli \n
  *         Dipartimento di Informatica \n
@@ -675,6 +676,51 @@ static void test_oll( void )
  }
 
 /*--------------------------------------------------------------------------*/
+/// OLL on the instances of the MaxSAT Evaluation whose optimum is known: the
+/// optimum if it finishes, bounds around it if the time limit stops it
+
+static void test_oll_mse( void )
+{
+ std::ifstream opt( "../data/wcnf/mse24-small/optima.txt" );
+ assert( opt );
+ unsigned optimal = 0 , stopped = 0;
+ std::string line;
+ while( std::getline( opt , line ) ) {
+  if( line.empty() || ( line[ 0 ] == '#' ) )
+   continue;
+  std::istringstream ls( line );
+  std::string name;
+  double z;
+  ls >> name >> z;
+
+  std::ifstream in( "../data/wcnf/mse24-small/" + name );
+  assert( in );
+  SATBlock b;
+  b.load( in , 'W' );
+  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+  s->set_par( SATSolver::intMaxSAT , 1 );
+  s->set_par( Solver::dblMaxTime , 2.0 );
+  b.register_Solver( s );
+  const int status = s->compute();
+  if( status == Solver::kOK ) {
+   assert( ( s->get_lb() == z ) && ( s->get_ub() == z ) );
+   s->get_var_solution();
+   assert( b.is_feasible() && ( b.get_violated_weight() == z ) );
+   ++optimal;
+   }
+  else {
+   assert( status == Solver::kStopTime );
+   assert( ( s->get_lb() <= z ) && ( z <= s->get_ub() ) );
+   ++stopped;
+   }
+  b.unregister_Solvers( true );
+  }
+ std::cout << solver_name << ": OLL optimal on " << optimal
+	   << " MaxSAT Evaluation instances, stopped by the time on "
+	   << stopped << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
 /// the SATLIB families whose satisfiability is known by their name
 
 static void test_solver_satlib( void )
@@ -740,12 +786,14 @@ int main( int argc , char ** argv )
  solver_name = "CaDiCaLSATSolver";
  test_solver();
  test_oll();
+ test_oll_mse();
  test_solver_satlib();
 #endif
 #ifdef SATBLOCK_HAS_MINISAT
  solver_name = "MiniSATSolver";
  test_solver();
  test_oll();
+ test_oll_mse();
  test_solver_satlib();
 #endif
 

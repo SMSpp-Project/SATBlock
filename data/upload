@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+cd "$(dirname "$0")/../.."   # run from the umbrella root
+
+# the archives go out as the version that CMakeLists.txt downloads, which new
+# data have to raise first [see DATA_VERSION there]
+version="$(sed -n 's/^set(DATA_VERSION \(.*\))$/\1/p' SATBlock/CMakeLists.txt)"
+for fmt in cnf wcnf; do
+ bash upload-to-package-registry SATBlock/data/${fmt}.tgz "$version"
+done

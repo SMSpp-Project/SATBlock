@@ -32,6 +32,10 @@ endif ()
 # ----- SATBlock_test --------------------------------------------------      #
 
 add_executable(${modName}_test test.cpp)
+
+# the instances the test reads are downloaded first [see the CMakeLists.txt of
+# the module]
+add_dependencies(${modName}_test fetch_sat_data)
 target_link_libraries(${modName}_test PRIVATE ${modNamespace}::${modName})
 if (SATBlock_HAS_CaDiCaL)
     target_compile_definitions(${modName}_test PRIVATE SATBLOCK_HAS_CADICAL)

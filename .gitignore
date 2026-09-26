@@ -65,5 +65,6 @@ ehthumbs.db
 
 # --- instances (distributed through the GitLab Package Registry) ---
 data/cnf
-data/cnf.tgz
-data/.extracted
+data/wcnf
+data/*.tgz
+data/.extracted*

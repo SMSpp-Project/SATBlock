@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the SATLIB instances in `data/cnf`, with the scripts that compress and
   upload them as the other modules do; the test checks that the uniform
   random families and the aim ones are satisfiable or not as their name says
+- 42 instances of the exact weighted track of the MaxSAT Evaluation 2024 in
+  `data/wcnf`, one per family, with their optimum, which the test checks OLL
+  against; the two archives `cnf.tgz` and `wcnf.tgz` are downloaded from the
+  Package Registry under the version `DATA_VERSION`, and extracted once per
+  version
 - the weighted partial MaxSAT in `SATBlock`: a weight per clause, +INF for
   the hard ones, read from the WCNF formats (the one up to 2021 with its top
   weight and the one from 2022 on) and written back to the latter, and in
