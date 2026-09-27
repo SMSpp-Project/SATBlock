@@ -24,7 +24,8 @@
 #include <numeric>
 #include <sstream>
 
-#include "BooleanVariableSolution.h"
+#include "ColVariableSolution.h"
+#include "LinearFunction.h"
 #include "SATBlock.h"
 
 /*--------------------------------------------------------------------------*/
@@ -282,35 +283,76 @@ void SATBlock::deserialize( const netCDF::NcGroup & group )
 /*--------------------- Methods for handling Variable ----------------------*/
 /*--------------------------------------------------------------------------*/
 
+void SATBlock::set_violation( ColVariable & r , unsigned int i )
+{
+ r.set_type( ColVariable::kBinary , eNoMod );
+ if( is_hard( i ) ) {  // a hard clause is never violated
+  r.set_value( 0 );
+  r.is_fixed( true , eNoMod );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
 void SATBlock::generate_abstract_variables( Configuration * stvv )
 {
  if( AR & HasVar )  // the Variable are there already
   return;           // nothing to do
 
- v_x = std::vector< BooleanVariable >( f_n_var );
+ v_x = std::vector< ColVariable >( f_n_var );
+ for( auto & x : v_x )
+  x.set_type( ColVariable::kBinary , eNoMod );
+
+ v_r = std::vector< ColVariable >( v_clauses.size() );
+ for( unsigned int i = 0 ; i < v_r.size() ; ++i )
+  set_violation( v_r[ i ] , i );
+
  add_static_variable( v_x , "x" );
+ add_static_variable( v_r , "r" );
+ add_dynamic_variable( l_r , "added r" );
 
  AR |= HasVar;
+ }
+
+/*--------------------------------------------------------------------------*/
+
+ColVariable & SATBlock::violation( unsigned int i )
+{
+ if( i < v_r.size() )
+  return( v_r[ i ] );
+ return( *std::next( l_r.begin() , i - v_r.size() ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+const ColVariable & SATBlock::get_violation( unsigned int i ) const
+{
+ return( const_cast< SATBlock * >( this )->violation( i ) );
  }
 
 /*--------------------------------------------------------------------------*/
 /*-------------------- Methods for handling Constraint ---------------------*/
 /*--------------------------------------------------------------------------*/
 
-void SATBlock::set_clause_constraint( ClauseConstraint & c , unsigned int i )
+void SATBlock::set_clause_constraint( FRowConstraint & c , unsigned int i ,
+				      ColVariable * r )
 {
- if( is_tautology( i ) ) {
-  // always satisfied: a relaxed ClauseConstraint with no literals
-  c.relax( true , eNoMod );
-  return;
+ LinearFunction::v_coeff_pair coeffs;
+ double lhs = - Inf< double >();  // a tautology is always satisfied
+ if( ! is_tautology( i ) ) {
+  coeffs.reserve( v_clauses[ i ].size() + 1 );
+  lhs = 1;
+  for( auto lit : v_clauses[ i ] ) {
+   coeffs.emplace_back( & v_x[ std::abs( lit ) - 1 ] , lit > 0 ? 1 : -1 );
+   if( lit < 0 )
+    --lhs;
+   }
   }
- ClauseConstraint::v_Literal lits;
- lits.reserve( v_clauses[ i ].size() );
- for( auto lit : v_clauses[ i ] )
-  lits.emplace_back( & v_x[ std::abs( lit ) - 1 ] , lit < 0 );
- c.set_literals( std::move( lits ) , eNoMod );
- if( ! is_hard( i ) )  // a soft clause does not have to be satisfied
-  c.relax( true , eNoMod );
+ coeffs.emplace_back( r , 1 );
+
+ c.set_function( new LinearFunction( std::move( coeffs ) , 0 ) , eNoMod );
+ c.set_lhs( lhs , eNoMod );
+ c.set_rhs( Inf< double >() , eNoMod );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -322,9 +364,16 @@ void SATBlock::generate_abstract_constraints( Configuration * stcc )
 
  generate_abstract_variables();
 
- v_c = std::vector< ClauseConstraint >( v_clauses.size() );
- for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
-  set_clause_constraint( v_c[ i ] , i );
+ // the clauses whose r is static have a static row too, the others a
+ // dynamic one
+ v_c = std::vector< FRowConstraint >( v_r.size() );
+ for( unsigned int i = 0 ; i < v_r.size() ; ++i )
+  set_clause_constraint( v_c[ i ] , i , & v_r[ i ] );
+ unsigned int i = v_r.size();
+ for( auto & r : l_r ) {
+  l_c.emplace_back();
+  set_clause_constraint( l_c.back() , i++ , & r );
+  }
 
  add_static_constraint( v_c , "clauses" );
  add_dynamic_constraint( l_c , "added clauses" );
@@ -334,11 +383,35 @@ void SATBlock::generate_abstract_constraints( Configuration * stcc )
 
 /*--------------------------------------------------------------------------*/
 
-ClauseConstraint & SATBlock::clause_constraint( unsigned int i )
+FRowConstraint & SATBlock::get_clause_constraint( unsigned int i )
 {
  if( i < v_c.size() )
   return( v_c[ i ] );
  return( *std::next( l_c.begin() , i - v_c.size() ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+/*--------------------- Methods for handling Objective ---------------------*/
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::generate_objective( Configuration * objc )
+{
+ if( AR & HasObj )  // the Objective is there already
+  return;           // nothing to do
+
+ generate_abstract_variables();
+
+ // the i-th term is the r of the i-th clause, 0 if the clause is hard
+ LinearFunction::v_coeff_pair coeffs;
+ coeffs.reserve( v_clauses.size() );
+ for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
+  coeffs.emplace_back( & violation( i ) , is_hard( i ) ? 0 : v_weights[ i ] );
+
+ f_obj.set_function( new LinearFunction( std::move( coeffs ) , 0 ) , eNoMod );
+ f_obj.set_sense( Objective::eMin , eNoMod );
+ set_objective( & f_obj , eNoMod );
+
+ AR |= HasObj;
  }
 
 /*--------------------------------------------------------------------------*/
@@ -368,14 +441,15 @@ bool SATBlock::is_tautology( unsigned int i ) const
 bool SATBlock::is_feasible( bool useabstract , Configuration * fsbc )
 {
  if( v_x.size() != f_n_var )
-  throw( std::logic_error( "SATBlock::is_feasible: the BooleanVariable have "
+  throw( std::logic_error( "SATBlock::is_feasible: the ColVariable have "
 			   "not been generated" ) );
 
  for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
   if( is_hard( i ) &&
       std::none_of( v_clauses[ i ].begin() , v_clauses[ i ].end() ,
 		    [ this ]( int lit ) {
-       return( v_x[ std::abs( lit ) - 1 ].get_value() == ( lit > 0 ) ); } ) )
+       return( ( v_x[ std::abs( lit ) - 1 ].get_value() > 0.5 ) ==
+		( lit > 0 ) ); } ) )
    return( false );
 
  return( true );
@@ -387,14 +461,15 @@ double SATBlock::get_violated_weight( void ) const
 {
  if( v_x.size() != f_n_var )
   throw( std::logic_error( "SATBlock::get_violated_weight: the "
-			   "BooleanVariable have not been generated" ) );
+			   "ColVariable have not been generated" ) );
 
  double sum = 0;
  for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
   if( ( ! is_hard( i ) ) &&
       std::none_of( v_clauses[ i ].begin() , v_clauses[ i ].end() ,
 		    [ this ]( int lit ) {
-       return( v_x[ std::abs( lit ) - 1 ].get_value() == ( lit > 0 ) ); } ) )
+       return( ( v_x[ std::abs( lit ) - 1 ].get_value() > 0.5 ) ==
+		( lit > 0 ) ); } ) )
    sum += v_weights[ i ];
 
  return( sum );
@@ -404,7 +479,7 @@ double SATBlock::get_violated_weight( void ) const
 
 Solution * SATBlock::get_Solution( Configuration * solc , bool emptys )
 {
- auto sol = new BooleanVariableSolution();
+ auto sol = new ColVariableSolution();
  if( ! emptys )
   sol->read( this );
  return( sol );
@@ -475,12 +550,23 @@ void SATBlock::set_weight( unsigned int i , double w , ModParam issueAMod )
 {
  const bool was_hard = is_hard( i );
  v_weights[ i ] = w;
- if( ( ! ( AR & HasCns ) ) || ( was_hard == is_hard( i ) ) ||
-     is_tautology( i ) || ( ! not_dry_run( issueAMod ) ) )
+ if( ! ( ( AR & HasVar ) && not_dry_run( issueAMod ) ) )
   return;
 
- // the abstract representation: a soft clause is relaxed, a hard one not
- clause_constraint( i ).relax( ! is_hard( i ) , un_ModBlock( issueAMod ) );
+ // the abstract representation: the r of a hard clause is fixed to 0, and
+ // its coefficient in the Objective is 0
+ auto & r = violation( i );
+ if( was_hard != is_hard( i ) ) {
+  if( is_hard( i ) ) {
+   r.set_value( 0 );
+   r.is_fixed( true , un_ModBlock( issueAMod ) );
+   }
+  else
+   r.is_fixed( false , un_ModBlock( issueAMod ) );
+  }
+ if( AR & HasObj )
+  static_cast< LinearFunction * >( f_obj.get_function() )->modify_coefficient(
+		       i , is_hard( i ) ? 0 : w , un_ModBlock( issueAMod ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -602,13 +688,34 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
   throw;
   }
 
- // the abstract representation
- if( ( AR & HasCns ) && not_dry_run( issueAMod ) ) {
-  l_ClauseConstraint nl( n_new );
+ // the abstract representation: the r of the new clauses, their rows and
+ // their terms in the Objective
+ if( ( AR & HasVar ) && not_dry_run( issueAMod ) ) {
+  std::list< ColVariable > nr( n_new );
   Index i = first;
-  for( auto & c : nl )
-   set_clause_constraint( c , i++ );
-  add_dynamic_constraints( l_c , nl , un_ModBlock( issueAMod ) );
+  for( auto & r : nr )
+   set_violation( r , i++ );
+  add_dynamic_variables( l_r , nr , un_ModBlock( issueAMod ) );
+
+  // the new r are the last ones of l_r
+  auto rit = std::prev( l_r.end() , long( n_new ) );
+  if( AR & HasCns ) {
+   std::list< FRowConstraint > nl( n_new );
+   i = first;
+   auto it = rit;
+   for( auto & c : nl )
+    set_clause_constraint( c , i++ , & *(it++) );
+   add_dynamic_constraints( l_c , nl , un_ModBlock( issueAMod ) );
+   }
+  if( AR & HasObj ) {
+   LinearFunction::v_coeff_pair coeffs;
+   coeffs.reserve( n_new );
+   i = first;
+   for( auto it = rit ; it != l_r.end() ; ++it , ++i )
+    coeffs.emplace_back( & *it , is_hard( i ) ? 0 : v_weights[ i ] );
+   static_cast< LinearFunction * >( f_obj.get_function() )->add_variables(
+				   std::move( coeffs ) , un_ModBlock( issueAMod ) );
+   }
   }
 
  if( issue_pmod( issueMod ) )
@@ -622,18 +729,23 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
 
 void SATBlock::guts_of_destructor( void )
 {
- // the ClauseConstraint go before the BooleanVariable they are active in,
+ // the rows and the Objective go before the ColVariable they are active in,
  // and are told not to bother with them, both going away together
  for( auto & c : v_c )
   c.clear();
  for( auto & c : l_c )
   c.clear();
+ f_obj.clear();
 
+ reset_objective();
  reset_dynamic_constraints();
  reset_static_constraints();
+ reset_dynamic_variables();
  reset_static_variables();
  l_c.clear();
  v_c.clear();
+ l_r.clear();
+ v_r.clear();
  v_x.clear();
 
  v_clauses.clear();

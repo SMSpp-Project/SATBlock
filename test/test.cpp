@@ -27,7 +27,8 @@
 #include <sstream>
 #include <utility>
 
-#include "BooleanVariableSolution.h"
+#include "ColVariableSolution.h"
+#include "LinearFunction.h"
 #include "SATBlock.h"
 #if defined( SATBLOCK_HAS_CADICAL ) || defined( SATBLOCK_HAS_MINISAT )
  #define SATBLOCK_HAS_SATSOLVER
@@ -74,13 +75,46 @@ static bool load_throws( const std::string & text , char frmt = 0 )
  }
 
 /*--------------------------------------------------------------------------*/
-/// sets the BooleanVariable of b to the bits of mask
+/// sets the ColVariable x of b to the bits of mask, and each r to 1 if its
+/// clause is violated
 
 static void set_values( SATBlock & b , unsigned long mask )
 {
  auto & x = b.get_variables();
  for( unsigned int i = 0 ; i < x.size() ; ++i )
   x[ i ].set_value( ( mask >> i ) & 1 );
+ for( unsigned int c = 0 ; c < b.get_number_clauses() ; ++c ) {
+  const auto & cl = b.get_clauses()[ c ];
+  const bool sat = std::any_of( cl.begin() , cl.end() , [ mask ]( int l ) {
+   return( bool( ( mask >> ( std::abs( l ) - 1 ) ) & 1 ) == ( l > 0 ) ); } );
+  if( ! b.get_violation( c ).is_fixed() )
+   b.get_violation( c ).set_value( sat ? 0 : 1 );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+/// true if all the rows of the clauses of b are satisfied by the values of
+/// its ColVariable
+
+static bool rows_feasible( SATBlock & b )
+{
+ bool all = true;
+ for( unsigned int c = 0 ; c < b.get_number_clauses() ; ++c ) {
+  auto & row = b.get_clause_constraint( c );
+  row.compute();
+  all = all && row.feasible();
+  }
+ return( all );
+ }
+
+/*--------------------------------------------------------------------------*/
+/// the value of the Objective of b at the values of its ColVariable
+
+static double objective_value( SATBlock & b )
+{
+ auto obj = static_cast< FRealObjective * >( b.get_objective() );
+ obj->compute();
+ return( obj->value() );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -201,35 +235,37 @@ static void test_abstract( void )
  SATBlock b;
  load_string( b , "p cnf 3 4\n1 -2 0\n2 3 0\n1 -1 0\n-3 0\n" );
  b.generate_abstract_constraints();
+ b.generate_objective();
 
  const auto & x = b.get_variables();
  const auto & c = b.get_clause_constraints();
  assert( ( x.size() == 3 ) && ( c.size() == 4 ) );
- assert( b.get_static_variable_groups().size() == 1 );
+ assert( b.get_static_variable_groups().size() == 2 );
  assert( b.get_static_constraint_groups().size() == 1 );
+ assert( x[ 0 ].get_type() == ColVariable::kBinary );
 
- // clause 0 is x0 or not x1
- assert( c[ 0 ].get_num_active_var() == 2 );
- assert( ( c[ 0 ].get_literals()[ 0 ] ==
-	   ClauseConstraint::Literal( const_cast< BooleanVariable * >(
-					       & x[ 0 ] ) , false ) ) &&
-	 ( c[ 0 ].get_literals()[ 1 ] ==
-	   ClauseConstraint::Literal( const_cast< BooleanVariable * >(
-					       & x[ 1 ] ) , true ) ) );
- assert( x[ 1 ].get_num_active() == 2 );
+ // clause 0 is x0 - x1 + r0 >= 0, r0 being fixed to 0 since it is hard
+ auto lf = static_cast< const LinearFunction * >( c[ 0 ].get_function() );
+ assert( lf->get_num_active_var() == 3 );
+ assert( ( lf->get_coefficient( 0 ) == 1 ) &&
+	 ( lf->get_coefficient( 1 ) == -1 ) &&
+	 ( lf->get_coefficient( 2 ) == 1 ) );
+ assert( ( c[ 0 ].get_lhs() == 0 ) &&
+	 ( c[ 0 ].get_rhs() == Inf< double >() ) );
+ assert( b.get_violation( 0 ).is_fixed() &&
+	 ( b.get_violation( 0 ).get_value() == 0 ) );
 
- // the tautology is relaxed and has no literals
- assert( c[ 2 ].is_relaxed() && ( c[ 2 ].get_num_active_var() == 0 ) );
+ // the tautology is the row r2 >= -INF
+ assert( ( c[ 2 ].get_lhs() == - Inf< double >() ) &&
+	 ( static_cast< const LinearFunction * >( c[ 2 ].get_function()
+					      )->get_num_active_var() == 1 ) );
 
- // the ClauseConstraint agree with is_feasible() on every assignment
+ // the rows agree with is_feasible() on every assignment, and the Objective
+ // is 0, all the clauses being hard
  for( unsigned long mask = 0 ; mask < 8 ; ++mask ) {
   set_values( b , mask );
-  bool all = true;
-  for( auto & cc : b.get_clause_constraints() ) {
-   cc.compute();
-   all = all && cc.feasible();
-   }
-  assert( b.is_feasible() == all );
+  assert( b.is_feasible() == rows_feasible( b ) );
+  assert( objective_value( b ) == 0 );
   }
  // x0 = true, x1 = true, x2 = false is the only assignment satisfying all
  for( unsigned long mask = 0 ; mask < 8 ; ++mask ) {
@@ -242,24 +278,28 @@ static void test_abstract( void )
 
 static void test_soft( void )
 {
- // hard: x0 or not x1; soft: x1 (weight 3), x2 (weight 2), and a soft
- // tautology
+ // hard: x0 or not x1; soft: x1 (weight 3), x2 (weight 2), a soft
+ // tautology and a soft clause with a variable twice
  SATBlock b;
- load_string( b , "h 1 -2 0\n3 2 0\n2 3 0\n1 1 -1 0\n" );
+ load_string( b , "h 1 -2 0\n3 2 0\n2 3 0\n1 1 -1 0\n4 -1 -1 3 0\n" );
+ b.generate_objective();
  b.generate_abstract_constraints();
 
- // the soft clauses are relaxed, with their literals, the tautology without
- const auto & c = b.get_clause_constraints();
- assert( ! c[ 0 ].is_relaxed() );
- assert( c[ 1 ].is_relaxed() && ( c[ 1 ].get_num_active_var() == 1 ) );
- assert( c[ 3 ].is_relaxed() && ( c[ 3 ].get_num_active_var() == 0 ) );
+ // the r of the soft clauses are free, that of the hard one is fixed
+ assert( b.get_violation( 0 ).is_fixed() &&
+	 ( ! b.get_violation( 1 ).is_fixed() ) );
 
- // feasibility looks at the hard clause only, the weight at the soft ones
+ // feasibility looks at the hard clause only, the weight at the soft ones,
+ // and the MILP formulation agrees with both
  for( unsigned long mask = 0 ; mask < 8 ; ++mask ) {
   set_values( b , mask );
   const bool x0 = mask & 1 , x1 = mask & 2 , x2 = mask & 4;
   assert( b.is_feasible() == ( x0 || ! x1 ) );
-  assert( b.get_violated_weight() == ( x1 ? 0 : 3 ) + ( x2 ? 0 : 2 ) );
+  const double w = ( x1 ? 0 : 3 ) + ( x2 ? 0 : 2 ) +
+                   ( ( ( ! x0 ) || x2 ) ? 0 : 4 );
+  assert( b.get_violated_weight() == w );
+  assert( rows_feasible( b ) == b.is_feasible() );
+  assert( objective_value( b ) == w );
   }
  }
 
@@ -273,12 +313,12 @@ static void test_solution( void )
  set_values( b , 5 );
 
  auto sol = b.get_Solution( nullptr , false );
- assert( dynamic_cast< BooleanVariableSolution * >( sol ) );
+ assert( dynamic_cast< ColVariableSolution * >( sol ) );
  set_values( b , 0 );
  sol->write( & b );
- assert( b.get_variables()[ 0 ].get_value() &&
-	 ( ! b.get_variables()[ 1 ].get_value() ) &&
-	 b.get_variables()[ 2 ].get_value() );
+ assert( ( b.get_variables()[ 0 ].get_value() == 1 ) &&
+	 ( b.get_variables()[ 1 ].get_value() == 0 ) &&
+	 ( b.get_variables()[ 2 ].get_value() == 1 ) );
  delete sol;
  }
 
@@ -358,32 +398,48 @@ static void test_modifications( void )
  assert( ( b.get_number_clauses() == 5 ) &&
 	 ( b.get_weights()[ 3 ] == 4 ) && b.is_hard( 4 ) );
 
- // with the abstract representation: the weights relax and enforce, the
- // clauses added join the dynamic group, in order
+ // with the abstract representation: the weights fix and unfix the r and
+ // change the Objective, the clauses added join the dynamic groups, in
+ // order, and the Objective
  b.generate_abstract_constraints();
+ b.generate_objective();
  assert( ( b.get_clause_constraints().size() == 5 ) &&
 	 b.get_added_clause_constraints().empty() );
- assert( b.get_clause_constraints()[ 1 ].is_relaxed() &&
-	 ! b.get_clause_constraints()[ 2 ].is_relaxed() );
+ assert( ( ! b.get_violation( 1 ).is_fixed() ) &&
+	 b.get_violation( 2 ).is_fixed() );
+ auto obj = static_cast< const LinearFunction * >(
+	     static_cast< FRealObjective * >( b.get_objective() )->get_function() );
+ assert( ( obj->get_coefficient( 1 ) == 1 ) &&
+	 ( obj->get_coefficient( 2 ) == 0 ) );
 
  std::vector< double > sw = { 2 , inf };
  b.chg_weights( sw , Block::Subset{ 2 , 1 } );  // not ordered
  assert( ( b.get_weights() ==
 	   SATBlock::v_Weight{ inf , inf , 2 , 4 , inf } ) );
- assert( ! b.get_clause_constraints()[ 1 ].is_relaxed() &&
-	 b.get_clause_constraints()[ 2 ].is_relaxed() );
- // a tautology stays relaxed
- std::vector< double > tw = { inf };
- b.chg_weights( tw , Block::Range( 3 , 4 ) );
- assert( b.get_clause_constraints()[ 3 ].is_relaxed() );
+ assert( b.get_violation( 1 ).is_fixed() &&
+	 ( ! b.get_violation( 2 ).is_fixed() ) );
+ assert( ( obj->get_coefficient( 1 ) == 0 ) &&
+	 ( obj->get_coefficient( 2 ) == 2 ) );
 
  b.add_clauses( { { 2 } , { 1 , 1 , -2 } } , { 6 , inf } );
  const auto & lc = b.get_added_clause_constraints();
  assert( ( b.get_number_clauses() == 7 ) && ( lc.size() == 2 ) );
- assert( lc.front().is_relaxed() && ( lc.front().get_num_active_var() == 1 ) );
- assert( ( ! lc.back().is_relaxed() ) &&
-	 ( lc.back().get_num_active_var() == 2 ) );
  assert( b.get_dynamic_constraint_groups().size() == 1 );
+ assert( b.get_dynamic_variable_groups().size() == 1 );
+ assert( ( ! b.get_violation( 5 ).is_fixed() ) &&
+	 b.get_violation( 6 ).is_fixed() );
+ assert( ( obj->get_num_active_var() == 7 ) &&
+	 ( obj->get_coefficient( 5 ) == 6 ) &&
+	 ( obj->get_coefficient( 6 ) == 0 ) );
+ assert( static_cast< const LinearFunction * >( lc.back().get_function()
+					     )->get_num_active_var() == 3 );
+
+ // the MILP formulation still agrees with the physical representation
+ for( unsigned long mask = 0 ; mask < 4 ; ++mask ) {
+  set_values( b , mask );
+  assert( rows_feasible( b ) == b.is_feasible() );
+  assert( objective_value( b ) == b.get_violated_weight() );
+  }
 
  // wrong input leaves the SATBlock as it was
  bool thrown = false;
@@ -500,10 +556,10 @@ static void test_solver( void )
   // relaxing the clause "not x0" makes it satisfiable: the ConstraintMod
   // makes the SATSolver give the clauses again
   b.generate_abstract_constraints();
-  b.get_clause_constraints()[ 1 ].relax( true );
+  b.get_clause_constraint( 1 ).relax( true );
   assert( s->compute() == Solver::kOK );
   s->get_var_solution();
-  assert( b.get_variables()[ 0 ].get_value() );
+  assert( b.get_variables()[ 0 ].get_value() == 1 );
   b.unregister_Solvers( true );
   }
 

@@ -60,14 +60,13 @@ namespace SMSpp_di_unipi_it
  * classes (CaDiCaLSATSolver, MiniSATSolver, ...) behave the same way,
  * as the :MILPSolver do for the MILP solvers they wrap.
  *
- * compute() gives the SAT solver the hard clauses of the SATBlock: the
- * ClauseConstraint of its abstract representation, if it has been
- * generated, leaving out the relaxed ones (the soft clauses and the
- * tautologies among them), and the hard clauses of its physical
- * representation otherwise. The soft clauses are not given to the SAT
- * solver, which therefore looks for a solution of the hard clauses only,
- * whatever it costs. A BooleanVariable that is fixed [see
- * Variable::is_fixed()] is fixed at its current value by an *assumption*,
+ * compute() gives the SAT solver the hard clauses of the physical
+ * representation of the SATBlock, leaving out those whose FRowConstraint is
+ * relaxed if the abstract representation has been generated. The soft
+ * clauses are not given to the SAT solver, which therefore looks for a
+ * solution of the hard clauses only, whatever it costs. A ColVariable x
+ * that is fixed [see Variable::is_fixed()] is fixed at its current value
+ * (true if larger than 1/2) by an *assumption*,
  * i.e., a literal that holds for this compute() only: when the SATBlock is
  * unsatisfiable under the assumptions, is_failed() tells which of them are
  * in the reason of it, which is what a core-guided MaxSAT algorithm needs.
@@ -82,7 +81,7 @@ namespace SMSpp_di_unipi_it
  *
  * The status returned by compute() is kOK if the hard clauses are
  * satisfiable, with a solution that get_var_solution() writes into the
- * BooleanVariable, kInfeasible if they are not, kStopTime if the time limit
+ * ColVariable x, kInfeasible if they are not, kStopTime if the time limit
  * dblMaxTime is reached first, and kError if the SAT solver gives up for any
  * other reason. After kOK get_lb() is 0 and get_ub() the sum of the weights
  * of the soft clauses the solution violates, both 0 if all the clauses are
@@ -221,7 +220,7 @@ class SATSolver : public Solver
 /*--------------------- METHODS FOR SOLVING THE MODEL ----------------------*/
  /// solves the SATBlock
  /** Solves the SATBlock, giving the SAT solver the clauses again if a
-  * Modification requires it and the fixed BooleanVariable as assumptions;
+  * Modification requires it and the fixed ColVariable x as assumptions;
   * the returned status is described in the comments to the class. */
 
  int compute( bool changedvars = true ) override;
@@ -245,9 +244,10 @@ class SATSolver : public Solver
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// writes the solution found into the BooleanVariable of the SATBlock
- /** Writes the solution found by the last compute() into the
-  * BooleanVariable of the SATBlock, generating them if needed; an
+ /// writes the solution found into the ColVariable of the SATBlock
+ /** Writes the solution found by the last compute() into the ColVariable x
+  * of the SATBlock, generating them if needed, and into the r, 1 for the
+  * soft clauses the solution violates and 0 for all the others; an
   * exception is thrown if there is no solution [see has_var_solution()]. */
 
  void get_var_solution( Configuration * solc = nullptr ) override;
@@ -292,7 +292,7 @@ class SATSolver : public Solver
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// solves the weighted MaxSAT by OLL, under the given assumptions
  /** Solves the weighted MaxSAT by OLL [see the comments to the class],
-  * \p fixed being the assumptions of the fixed BooleanVariable, which hold
+  * \p fixed being the assumptions of the fixed ColVariable x, which hold
   * as hard clauses; returns the result of the last SAT call, 10, 20 or 0
   * [see sat_solve()], setting f_lb, and v_failed after 20. */
 

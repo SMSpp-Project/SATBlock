@@ -14,12 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variables and the clauses as its physical representation, read from the
   DIMACS CNF format (comments, clauses over several lines, the '%' ending the
   SATLIB instances) and written back to it, a literal repeated in a clause
-  kept once and a tautology kept as it is; the netCDF format; one
-  `BooleanVariable` per variable and one `ClauseConstraint` per clause as its
-  abstract representation, a tautology being a relaxed `ClauseConstraint`
-  with no literals; `is_feasible()` and a `BooleanVariableSolution`
+  kept once and a tautology kept as it is; the netCDF format; the MILP
+  formulation as its abstract representation, i.e., a binary `ColVariable`
+  per variable, a binary `ColVariable` per clause that is 1 if the clause is
+  violated (fixed to 0 for the hard ones), a `FRowConstraint` per clause and
+  the weight of the violated soft clauses as the `FRealObjective`, so that
+  the :MILPSolver and the decompositions work on it as they are;
+  `is_feasible()` and a `ColVariableSolution`
 - `SATSolver`, the base of the Solver of a `SATBlock` through an incremental
-  SAT solver: the fixed `BooleanVariable` are assumptions and `is_failed()`
+  SAT solver, reading the physical representation: the fixed variables are
+  assumptions and `is_failed()`
   tells which of them are in the reason of an unsatisfiable answer,
   `dblMaxTime` stops the SAT solver, and the clauses are given again only
   after a Modification that changes them; `CaDiCaLSATSolver` and
@@ -41,12 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the weighted partial MaxSAT in `SATBlock`: a weight per clause, +INF for
   the hard ones, read from the WCNF formats (the one up to 2021 with its top
   weight and the one from 2022 on) and written back to the latter, and in
-  netCDF; a soft clause is a relaxed `ClauseConstraint` with its literals,
-  `is_feasible()` looks at the hard clauses and `get_violated_weight()` at
-  the soft ones
+  netCDF; `is_feasible()` looks at the hard clauses and
+  `get_violated_weight()` at the soft ones
 - the physical Modification of `SATBlock`: `chg_weights()` on a Range or a
-  Subset, relaxing or enforcing the clauses that turn soft or hard, and
-  `add_clauses()`, whose `ClauseConstraint` join a dynamic group, with
+  Subset, fixing or unfixing the variable of the clauses that turn hard or
+  soft and changing the Objective, and `add_clauses()`, whose variables and
+  rows join dynamic groups and the Objective, with
   `SATBlockMod`, `SATBlockRngdMod` and `SATBlockSbstMod`
 - `SATSolver` gives the SAT solver the hard clauses only, the clauses added
   on top of those it has, and reports as upper bound the weight of the soft

@@ -4,7 +4,7 @@
 /** @file
  * Header file for the *concrete* class SATBlock, which implements the
  * Block concept [see Block.h] for the satisfiability problems of the
- * propositional logic, i.e., finding values of a set of BooleanVariable
+ * propositional logic, i.e., finding values of a set of Boolean variables
  * satisfying a set of clauses, and for their weighted (partial) MaxSAT
  * version, where some clauses are soft and have a weight. Also the
  * Modification classes of the SATBlock are here.
@@ -31,8 +31,9 @@
 #include <vector>
 
 #include "Block.h"
-#include "BooleanVariable.h"
-#include "ClauseConstraint.h"
+#include "ColVariable.h"
+#include "FRealObjective.h"
+#include "FRowConstraint.h"
 
 /*--------------------------------------------------------------------------*/
 /*------------------------------ NAMESPACE ---------------------------------*/
@@ -74,17 +75,31 @@ namespace SMSpp_di_unipi_it
  * and its negation, in which case it is always satisfied; the empty clause
  * is never satisfied.
  *
- * The "abstract representation" has one BooleanVariable per variable, in a
- * single static group, and one ClauseConstraint per clause, the i-th
- * ClauseConstraint being the i-th clause: those of the clauses the SATBlock
- * has when the abstract representation is generated are in a static group,
- * those added afterwards [see add_clauses()] in a dynamic one. A soft clause
- * is a relaxed ClauseConstraint, since it does not have to be satisfied,
- * and a tautology is a relaxed ClauseConstraint with no literals, since a
- * ClauseConstraint cannot hold a BooleanVariable twice and a relaxed
- * Constraint is always satisfied, which is what a tautology is. There is no
- * Objective, the weights of the soft clauses being in the physical
- * representation only.
+ * The "abstract representation" is the MILP formulation of the problem:
+ *
+ * - one binary ColVariable x_i per variable, the value 1 being true, in the
+ *   static group "x";
+ *
+ * - one binary ColVariable r_c per clause c, 1 if the clause is violated,
+ *   fixed to 0 if the clause is hard, in the static group "r";
+ *
+ * - one FRowConstraint per clause c, with P_c and N_c the indices of the
+ *   variables that are in c as they are and negated,
+ *
+ *   \f[ \sum_{i \in P_c} x_i - \sum_{i \in N_c} x_i + r_c \geq 1 - |N_c| \f]
+ *
+ *   in the static group "clauses", a tautology being the row r_c \f$\geq\f$
+ *   -INF, always satisfied;
+ *
+ * - the FRealObjective \f$\min \sum_c w_c r_c\f$, w_c being the weight of
+ *   the soft clause c and 0 for a hard one.
+ *
+ * The r_c and the rows of the clauses added after the abstract
+ * representation has been generated [see add_clauses()] are in the dynamic
+ * groups "added r" and "added clauses", in the order they are added. The
+ * :MILPSolver, and the decompositions such as the Lagrangian one, then work
+ * on a SATBlock as they are; the SAT solvers [see SATSolver.h] read instead
+ * the physical representation.
  *
  * A SATBlock can be load()-ed from the DIMACS CNF and WCNF formats, and
  * deserialize() and serialize() it out of and into a netCDF group [see
@@ -108,9 +123,6 @@ class SATBlock : public Block
  using v_Weight = std::vector< double >;  ///< the weights of the clauses
 
  using c_v_Weight = const v_Weight;       ///< a const vector of weights
-
- /// the dynamic ClauseConstraint of the clauses added by add_clauses()
- using l_ClauseConstraint = std::list< ClauseConstraint >;
 
 /*------------------------------ CONSTRUCTOR -------------------------------*/
  /// constructor of SATBlock, taking a pointer to the father Block
@@ -176,24 +188,22 @@ class SATBlock : public Block
  void deserialize( const netCDF::NcGroup & group ) override;
 
 /*--------------------- Methods for handling Variable ----------------------*/
- /// generates the BooleanVariable of the SATBlock, one per variable
+ /// generates the ColVariable x and r of the SATBlock
 
  void generate_abstract_variables( Configuration * stvv = nullptr ) override;
 
 /*-------------------- Methods for handling Constraint ---------------------*/
- /// generates the ClauseConstraint of the SATBlock, one per clause
- /** Generates the ClauseConstraint of the SATBlock, one per clause, also
-  * generating the BooleanVariable if they are not there yet. */
+ /// generates the FRowConstraint of the SATBlock, one per clause
+ /** Generates the FRowConstraint of the SATBlock, one per clause, also
+  * generating the ColVariable if they are not there yet. */
 
  void generate_abstract_constraints( Configuration * stcc = nullptr )
   override;
 
 /*--------------------- Methods for handling Objective ---------------------*/
- /// the SATBlock is a feasibility problem, hence it has no Objective
+ /// generates the Objective, the weight of the violated soft clauses
 
- void generate_objective( Configuration * objc = nullptr ) override {
-  AR |= HasObj;
-  }
+ void generate_objective( Configuration * objc = nullptr ) override;
 
 /*------------------ Methods for reading the data of the SATBlock ----------*/
  /// returns the number of variables
@@ -237,56 +247,51 @@ class SATBlock : public Block
  [[nodiscard]] bool is_tautology( unsigned int i ) const;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the BooleanVariable, empty if not generated yet
+ /// returns the ColVariable x of the variables, empty if not generated yet
 
- [[nodiscard]] const std::vector< BooleanVariable > & get_variables( void )
-  const { return( v_x ); }
-
-/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the BooleanVariable, whose values a Solver writes
-
- [[nodiscard]] std::vector< BooleanVariable > & get_variables( void ) {
+ [[nodiscard]] const std::vector< ColVariable > & get_variables( void ) const {
   return( v_x );
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the static ClauseConstraint, empty if not generated yet
- /** Returns the static ClauseConstraint, those of the clauses the SATBlock
-  * had when the abstract representation was generated; empty if it has not
-  * been generated yet. */
+ /// returns the ColVariable x of the variables, e.g., to fix some of them
 
- [[nodiscard]] const std::vector< ClauseConstraint > & get_clause_constraints(
+ [[nodiscard]] std::vector< ColVariable > & get_variables( void ) {
+  return( v_x );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the ColVariable r of the clause i, which must exist
+
+ [[nodiscard]] const ColVariable & get_violation( unsigned int i ) const;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the ColVariable r of the clause i, whose value a Solver writes
+
+ [[nodiscard]] ColVariable & get_violation( unsigned int i ) {
+  return( violation( i ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the FRowConstraint of the clause i, which must exist
+
+ [[nodiscard]] FRowConstraint & get_clause_constraint( unsigned int i );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the static FRowConstraint of the clauses, empty if not there
+
+ [[nodiscard]] const std::vector< FRowConstraint > & get_clause_constraints(
 						       void ) const {
   return( v_c );
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the static ClauseConstraint, e.g., to relax some of them
+ /// returns the dynamic FRowConstraint, those of the clauses added later
 
- [[nodiscard]] std::vector< ClauseConstraint > & get_clause_constraints(
-								  void ) {
-  return( v_c );
-  }
+ [[nodiscard]] const std::list< FRowConstraint > &
+  get_added_clause_constraints( void ) const { return( l_c ); }
 
-/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the dynamic ClauseConstraint, those of the clauses added later
- /** Returns the dynamic ClauseConstraint, those of the clauses added by
-  * add_clauses() after the abstract representation was generated, in the
-  * order they were added: together with get_clause_constraints() they are
-  * all the clauses, in the same order. */
-
- [[nodiscard]] const l_ClauseConstraint & get_added_clause_constraints(
-						       void ) const {
-  return( l_c );
-  }
-
-/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the dynamic ClauseConstraint, e.g., to relax some of them
-
- [[nodiscard]] l_ClauseConstraint & get_added_clause_constraints( void ) {
-  return( l_c );
-  }
-
+/*--------------------------------------------------------------------------*/
 /*------------- Methods for checking the state of the SATBlock -------------*/
  /// returns true if any part of the abstract representation is there
 
@@ -296,12 +301,12 @@ class SATBlock : public Block
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns true if the values of the BooleanVariable satisfy the hard
- /// clauses
- /** Returns true if the current values of the BooleanVariable satisfy all
-  * the hard clauses, read out of the physical representation whatever
-  * \p useabstract says (the two coincide); the BooleanVariable must have
-  * been generated, otherwise an exception is thrown. */
+ /// returns true if the values of the ColVariable x satisfy the hard clauses
+ /** Returns true if the current values of the ColVariable x, true when
+  * larger than 1/2, satisfy all the hard clauses, read out of the physical
+  * representation whatever \p useabstract says (the two coincide); the
+  * ColVariable must have been generated, otherwise an exception is
+  * thrown. */
 
  bool is_feasible( bool useabstract = false ,
 		   Configuration * fsbc = nullptr ) override;
@@ -309,18 +314,18 @@ class SATBlock : public Block
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the sum of the weights of the soft clauses violated
  /** Returns the sum of the weights of the soft clauses that the current
-  * values of the BooleanVariable violate, i.e., the value of the MaxSAT
+  * values of the ColVariable x violate, i.e., the value of the MaxSAT
   * objective, the hard clauses being left out whether they are satisfied or
-  * not [see is_feasible()]; the BooleanVariable must have been generated,
+  * not [see is_feasible()]; the ColVariable must have been generated,
   * otherwise an exception is thrown. */
 
  [[nodiscard]] double get_violated_weight( void ) const;
 
 /*------------------------ Methods for the Solution ------------------------*/
- /// returns a BooleanVariableSolution of the SATBlock
- /** Returns a BooleanVariableSolution [see BooleanVariableSolution.h] of
-  * the SATBlock, which has read() the current values of the BooleanVariable
-  * unless \p emptys is true. */
+ /// returns a ColVariableSolution of the SATBlock
+ /** Returns a ColVariableSolution [see ColVariableSolution.h] of the
+  * SATBlock, which has read() the current values of its ColVariable unless
+  * \p emptys is true. */
 
  Solution * get_Solution( Configuration * solc = nullptr ,
 			  bool emptys = true ) override;
@@ -345,8 +350,9 @@ class SATBlock : public Block
  /// changes the weights of the clauses in the Range
  /** Changes the weights of the clauses in the Range \p rng, the new ones
   * being in \p NWeight, +INF making a clause hard; in the abstract
-  * representation a clause becoming soft is relaxed, and one becoming hard
-  * is enforced (unless it is a tautology). An exception is thrown if
+  * representation the r_c of a clause becoming hard is fixed to 0, that of
+  * one becoming soft is unfixed, and the coefficients of the Objective
+  * change. An exception is thrown if
   * \p NWeight is shorter than \p rng or a weight is wrong [see load()]. */
 
  void chg_weights( MF_dbl_sp NWeight , Range rng = INFRange ,
@@ -367,9 +373,9 @@ class SATBlock : public Block
  /// adds the given clauses, with their weights, after the existing ones
  /** Adds the clauses in \p clauses after the existing ones, with the
   * weights in \p weights, all hard if it is empty [see load()]. In the
-  * abstract representation, if it has been generated, the new
-  * ClauseConstraint join the dynamic group [see
-  * get_added_clause_constraints()]. The SATBlockRngdMod issued has type
+  * abstract representation, if it has been generated, the new r_c and
+  * FRowConstraint join the dynamic groups, and the new r_c the Objective.
+  * The SATBlockRngdMod issued has type
   * eAddClauses and the Range of the indices of the new clauses. */
 
  void add_clauses( v_Clause && clauses , v_Weight && weights = {} ,
@@ -415,20 +421,23 @@ class SATBlock : public Block
  void check_weights( unsigned int first = 0 ) const;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// sets the literals of the ClauseConstraint c out of the i-th clause
- /** Sets the literals of the ClauseConstraint \p c out of the i-th clause,
-  * relaxing it if the clause is soft, or a tautology, which has no
-  * literals. */
+ /// sets the ColVariable r of the i-th clause: binary, fixed if hard
 
- void set_clause_constraint( ClauseConstraint & c , unsigned int i );
+ void set_violation( ColVariable & r , unsigned int i );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the ClauseConstraint of the i-th clause, static or dynamic
+ /// sets the FRowConstraint c of the i-th clause, whose r is r
 
- ClauseConstraint & clause_constraint( unsigned int i );
+ void set_clause_constraint( FRowConstraint & c , unsigned int i ,
+			     ColVariable * r );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// changes the weight of the i-th clause, relaxing or enforcing it
+ /// returns the ColVariable r of the i-th clause, static or dynamic
+
+ ColVariable & violation( unsigned int i );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// changes the weight of the i-th clause, in the abstract representation too
 
  void set_weight( unsigned int i , double w , ModParam issueAMod );
 
@@ -445,11 +454,17 @@ class SATBlock : public Block
 
  v_Weight v_weights;       ///< the weights of the clauses, +INF if hard
 
- std::vector< BooleanVariable > v_x;   ///< the BooleanVariable
+ std::vector< ColVariable > v_x;     ///< the ColVariable x of the variables
 
- std::vector< ClauseConstraint > v_c;  ///< the static ClauseConstraint
+ std::vector< ColVariable > v_r;     ///< the static ColVariable r
 
- l_ClauseConstraint l_c;   ///< the dynamic ClauseConstraint
+ std::list< ColVariable > l_r;       ///< the dynamic ColVariable r
+
+ std::vector< FRowConstraint > v_c;  ///< the static rows of the clauses
+
+ std::list< FRowConstraint > l_c;    ///< the dynamic rows of the clauses
+
+ FRealObjective f_obj;     ///< the weight of the violated soft clauses
 
  unsigned char AR;     ///< bit-wise coded: what abstract is there
 

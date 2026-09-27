@@ -135,15 +135,27 @@ void SATSolver::set_par( idx_type par , double value )
 
 void SATSolver::process_outstanding_Modification( void )
 {
+ // the Function of the Objective, whose changes are those of the weights
+ auto obj = dynamic_cast< const FRealObjective * >( f_sat->get_objective() );
+ const Function * objf = obj ? obj->get_function() : nullptr;
+
  // fixing or unfixing a Variable is taken care of by the assumptions, the
  // clauses added by add_new_clauses(), and so are the weights changed as
- // long as the hard clauses stay the same; any other Modification means the
- // clauses are given again
+ // long as the hard clauses stay the same, which the Objective only follows;
+ // any other Modification means the clauses are given again
  while( auto mod = pop() ) {
   if( std::dynamic_pointer_cast< const VariableMod >( mod ) ||
-      std::dynamic_pointer_cast< const BlockModAdd< ClauseConstraint > >(
+      std::dynamic_pointer_cast< const ObjectiveMod >( mod ) ||
+      std::dynamic_pointer_cast< const BlockModAdd< ColVariable > >( mod ) ||
+      std::dynamic_pointer_cast< const BlockModAdd< FRowConstraint > >(
 									mod ) )
    continue;
+  if( auto fmod = std::dynamic_pointer_cast< const FunctionMod >( mod ) )
+   if( objf && ( fmod->function() == objf ) )
+    continue;
+  if( auto fmod = std::dynamic_pointer_cast< const FunctionModVars >( mod ) )
+   if( objf && ( fmod->function() == objf ) )
+    continue;
   if( auto smod = std::dynamic_pointer_cast< const SATBlockMod >( mod ) ) {
    if( smod->type() == SATBlockMod::eAddClauses )
     continue;
@@ -168,42 +180,30 @@ void SATSolver::load_clauses( void )
  sat_new();
  f_has_sat = true;
 
+ // the hard clauses of the physical representation, but those whose row is
+ // relaxed, if the abstract representation is there; a tautology is
+ // harmless
  const auto & sat = std::as_const( *f_sat );
- const auto & cc = sat.get_clause_constraints();
- const auto & lc = sat.get_added_clause_constraints();
- v_hard.assign( sat.get_number_clauses() , 0 );
- if( cc.size() + lc.size() == sat.get_number_clauses() ) {
-  // the abstract representation, leaving out the relaxed ClauseConstraint
-  const auto & x = sat.get_variables();
-  std::vector< int > clause;
-  unsigned int i = 0;
-  auto give = [ & ]( const ClauseConstraint & c ) {
-   if( c.is_relaxed() ) {
-    ++i;
-    return;
-    }
-   clause.clear();
-   for( const auto & lit : c.get_literals() ) {
-    const int v = int( lit.first - x.data() ) + 1;
-    clause.push_back( lit.second ? - v : v );
-    }
-   sat_clause( clause );
-   v_hard[ i++ ] = 1;
-   };
-  for( const auto & c : cc )
-   give( c );
-  for( const auto & c : lc )
-   give( c );
-  }
- else {
-  // the physical representation, where a tautology is harmless
-  const auto & clauses = sat.get_clauses();
-  for( unsigned int i = 0 ; i < clauses.size() ; ++i )
-   if( sat.is_hard( i ) ) {
-    sat_clause( clauses[ i ] );
-    v_hard[ i ] = 1;
-    }
-  }
+ const auto & clauses = sat.get_clauses();
+ v_hard.assign( clauses.size() , 0 );
+ for( unsigned int i = 0 ; i < clauses.size() ; ++i )
+  if( sat.is_hard( i ) )
+   v_hard[ i ] = 1;
+ unsigned int i = 0;
+ for( const auto & c : sat.get_clause_constraints() )
+  if( c.is_relaxed() && ( i < v_hard.size() ) )
+   v_hard[ i++ ] = 0;
+  else
+   ++i;
+ for( const auto & c : sat.get_added_clause_constraints() )
+  if( c.is_relaxed() && ( i < v_hard.size() ) )
+   v_hard[ i++ ] = 0;
+  else
+   ++i;
+
+ for( i = 0 ; i < clauses.size() ; ++i )
+  if( v_hard[ i ] )
+   sat_clause( clauses[ i ] );
 
  f_reload = false;
  }
@@ -250,12 +250,12 @@ int SATSolver::compute( bool changedvars )
    add_new_clauses();
   }
 
- // the fixed BooleanVariable, if they exist, are assumptions
+ // the fixed ColVariable x, if they exist, are assumptions
  const auto & x = std::as_const( *f_sat ).get_variables();
  std::vector< int > assumptions;
  for( unsigned int i = 0 ; i < x.size() ; ++i )
   if( x[ i ].is_fixed() )
-   assumptions.push_back( x[ i ].get_value() ? int( i + 1 )
+   assumptions.push_back( ( x[ i ].get_value() > 0.5 ) ? int( i + 1 )
 			                     : - int( i + 1 ) );
 
  v_failed.assign( f_sat->get_number_variables() , 0 );
@@ -599,8 +599,19 @@ void SATSolver::get_var_solution( Configuration * solc )
  f_sat->generate_abstract_variables();
  auto & x = f_sat->get_variables();
  for( unsigned int i = 0 ; i < x.size() ; ++i )
-  x[ i ].set_value( v_model.empty() ? sat_value( int( i + 1 ) )
-		                    : bool( v_model[ i ] ) );
+  x[ i ].set_value( ( v_model.empty() ? sat_value( int( i + 1 ) )
+		                      : bool( v_model[ i ] ) ) ? 1 : 0 );
+
+ // r is 1 for the soft clauses the solution violates, 0 for all the others
+ const auto & clauses = f_sat->get_clauses();
+ for( unsigned int i = 0 ; i < clauses.size() ; ++i ) {
+  const bool violated = ( ! f_sat->is_hard( i ) ) &&
+   std::none_of( clauses[ i ].begin() , clauses[ i ].end() ,
+		 [ & x ]( int lit ) {
+    return( ( x[ std::abs( lit ) - 1 ].get_value() > 0.5 ) == ( lit > 0 ) );
+    } );
+  f_sat->get_violation( i ).set_value( violated ? 1 : 0 );
+  }
  }
 
 /*--------------------------------------------------------------------------*/

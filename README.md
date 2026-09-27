@@ -3,24 +3,36 @@
 `SATBlock` is a SMS++ :Block for the satisfiability problems of the
 propositional logic, i.e., finding values of a set of Boolean variables that
 satisfy a set of clauses, each clause being the disjunction of a number of
-literals (a variable, either as it is or negated). Its physical
-representation is the number of the variables and the clauses, the latter in
-the DIMACS convention; its abstract representation has one `BooleanVariable`
-per variable and one `ClauseConstraint` per clause, the two classes of the
-SMS++ core for the propositional logic, and no Objective, the problem being
-one of feasibility.
+literals (a variable, either as it is or negated), and for their weighted
+partial MaxSAT version, where the soft clauses may be violated at the cost of
+their weight. Its physical representation is the number of the variables, the
+clauses in the DIMACS convention and their weights; its abstract
+representation is the MILP formulation of the problem, i.e., a binary
+`ColVariable` per variable, a binary `ColVariable` per clause that is 1 if the
+clause is violated (fixed to 0 for the hard ones), a `FRowConstraint` per
+clause and the weight of the violated soft clauses as the `FRealObjective`, so
+that the :MILPSolver and the decompositions of SMS++, such as the Lagrangian
+one, work on a `SATBlock` as they are.
 
-A `SATBlock` is read from the DIMACS CNF format of the SAT competitions and
-of the SATLIB collection, and it is serialized into and deserialized out of
-netCDF like any other :Block; its solution is a `BooleanVariableSolution`.
+A `SATBlock` is read from the DIMACS CNF format of the SAT competitions and of
+the SATLIB collection and from the WCNF formats of the MaxSAT Evaluations, and
+it is serialized into and deserialized out of netCDF like any other :Block;
+its solution is a `ColVariableSolution`. Its clauses can be added and their
+weights changed, with the Modification that tell the Solver what changed.
 
-`SATSolver` is the base of the Solver of a `SATBlock` through an
-incremental SAT solver, as `MILPSolver` is for the MILP solvers: it gives the
-SAT solver the clauses, the fixed `BooleanVariable` as assumptions (so that,
-after an unsatisfiable answer, it tells which of them are in its reason) and
-the time limit, and it gives the clauses again only after a Modification
-that changes them. `CaDiCaLSATSolver` and `MiniSATSolver` are the ones
-for CaDiCaL and MiniSat, each built if its SAT solver is found.
+`SATSolver` is the base of the Solver of a `SATBlock` through an incremental
+SAT solver, as `MILPSolver` is for the MILP solvers: it gives the SAT solver
+the hard clauses, those added on top of those it has, the fixed variables as
+assumptions (so that, after an unsatisfiable answer, it tells which of them
+are in its reason) and the time limit. With the parameter `intMaxSAT` it
+solves the weighted MaxSAT by the core-guided algorithm OLL, with the
+assumptions stratified by weight and the cores trimmed and minimized.
+`CaDiCaLSATSolver` and `MiniSATSolver` are the ones for CaDiCaL and MiniSat,
+each built if its SAT solver is found.
+
+`smspp_satgen` generates random weighted partial MaxSAT instances made of
+groups of clauses bound by a tunable fraction of linking clauses, which is the
+structure the decompositions are for.
 
 
 ## Getting started
