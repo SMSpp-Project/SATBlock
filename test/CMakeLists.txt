@@ -29,40 +29,42 @@ else ()
     endif ()
 endif ()
 
-# ----- SATBlock_test --------------------------------------------------      #
+# ----- SATBlock_unit_test ---------------------------------------------      #
 
-add_executable(${modName}_test test.cpp)
+add_executable(${modName}_unit_test test.cpp)
 
 # the instances the test reads are downloaded first [see the CMakeLists.txt of
 # the module]
-add_dependencies(${modName}_test fetch_sat_data)
-target_link_libraries(${modName}_test PRIVATE ${modNamespace}::${modName})
+add_dependencies(${modName}_unit_test fetch_sat_data)
+target_link_libraries(${modName}_unit_test PRIVATE ${modNamespace}::${modName})
 if (SATBlock_HAS_CaDiCaL)
-    target_compile_definitions(${modName}_test PRIVATE SATBLOCK_HAS_CADICAL)
+    target_compile_definitions(${modName}_unit_test PRIVATE
+                               SATBLOCK_HAS_CADICAL)
 endif ()
 if (SATBlock_HAS_MiniSat)
-    target_compile_definitions(${modName}_test PRIVATE SATBLOCK_HAS_MINISAT)
+    target_compile_definitions(${modName}_unit_test PRIVATE
+                               SATBLOCK_HAS_MINISAT)
 endif ()
 
 if (WIN32 AND BUILD_SHARED_LIBS AND NOT DEFINED ENV{CONDA_BUILD})
     # On Windows with shared libraries enabled copies all runtime DLL
     # dependencies next to the executable in the build directory
     # (POST_BUILD), using CMake's TARGET_RUNTIME_DLLS generator expression
-    add_custom_command(TARGET ${modName}_test POST_BUILD
+    add_custom_command(TARGET ${modName}_unit_test POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:${modName}_test>
-            $<TARGET_FILE_DIR:${modName}_test>
+            $<TARGET_RUNTIME_DLLS:${modName}_unit_test>
+            $<TARGET_FILE_DIR:${modName}_unit_test>
             COMMAND_EXPAND_LISTS
-            COMMENT "Copying runtime DLLs next to ${modName}_test.exe")
+            COMMENT "Copying runtime DLLs next to ${modName}_unit_test.exe")
 endif ()
 
-add_test(NAME ${modName}_test
-         COMMAND ${modName}_test
+add_test(NAME ${modName}_unit_test
+         COMMAND ${modName}_unit_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # The label lets the module CI select exactly the tests exercising this
 # module with `ctest -L <module>` (see tests/cmake/TestLabels.cmake in the
 # umbrella for the system-tests counterpart).
-set_tests_properties(${modName}_test PROPERTIES LABELS "${modName}")
+set_tests_properties(${modName}_unit_test PROPERTIES LABELS "${modName}")
 
 # --------------------------------------------------------------------------- #

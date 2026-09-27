@@ -11,7 +11,7 @@
 ##############################################################################
 
 # module name
-NAME = SATBlock_test
+NAME = SATBlock_unit_test
 
 # basic directory
 DIR = .

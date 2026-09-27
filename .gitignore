@@ -29,7 +29,7 @@
 *.gcda
 
 # --- Test binaries ------------------------------------------
-test/SATBlock_test
+test/SATBlock_unit_test
 
 # --- CMake --------------------------------------------------
 build/

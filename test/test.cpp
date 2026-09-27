@@ -330,7 +330,7 @@ static void test_round_trips( void )
  load_string( b , "p cnf 4 4\n1 -2 0\n2 3 -4 0\n4 0\n-1 -3 0\n" );
 
  // netCDF
- const char * file = "SATBlock_test.nc4";
+ const char * file = "SATBlock_unit_test.nc4";
  {
   netCDF::NcFile f( file , netCDF::NcFile::replace );
   auto g = f.addGroup( "Block" );
