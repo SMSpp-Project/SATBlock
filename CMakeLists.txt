@@ -229,12 +229,6 @@ add_library(${modNamespace}::${modName} ALIAS ${modName})
 # again instead of taking them for the current ones.
 set(DATA_VERSION 2026-09-26)
 
-if (UNIX)
-    set(TAR_FLAGS --warning=no-unknown-keyword -xzf)
-elseif (WIN32)
-    set(TAR_FLAGS xzf)
-endif ()
-
 set(DATA_MARKERS)
 foreach (fmt cnf wcnf)
     set(url "https://gitlab.com/api/v4/projects/86936161/packages/generic/${fmt}/${DATA_VERSION}/${fmt}.tgz")
@@ -269,7 +263,7 @@ endif()
 
     add_custom_command(
             OUTPUT ${marker}
-            COMMAND tar ${TAR_FLAGS} ${archive}
+            COMMAND ${CMAKE_COMMAND} -E tar xzf ${archive}
             COMMAND ${CMAKE_COMMAND} -E touch ${marker}
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
             COMMENT "Extracting ${fmt}.tgz"

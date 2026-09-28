@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- the data archives are extracted by `cmake -E tar`, which also works with
+  the tar of macOS, where the option `--warning=no-unknown-keyword` of GNU
+  tar stopped the build.
+
 ## [0.1.0] - 2026-09-28
 
 ### Added
