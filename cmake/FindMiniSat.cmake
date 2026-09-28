@@ -38,7 +38,7 @@ find_path(MINISAT_INCLUDE_DIR
 find_library(MINISAT_LIBRARY
              NAMES minisat
              HINTS ${MINISAT_ROOT} ENV MINISAT_ROOT
-             PATH_SUFFIXES lib
+             PATH_SUFFIXES lib/${CMAKE_LIBRARY_ARCHITECTURE} lib
              DOC "MiniSat library.")
 
 find_package_handle_standard_args(MiniSat

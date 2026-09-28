@@ -40,7 +40,7 @@ find_path(CADICAL_INCLUDE_DIR
 find_library(CADICAL_LIBRARY
              NAMES cadical
              HINTS ${CADICAL_ROOT} ENV CADICAL_ROOT
-             PATH_SUFFIXES lib build
+             PATH_SUFFIXES lib/${CMAKE_LIBRARY_ARCHITECTURE} lib build
              DOC "CaDiCaL library.")
 
 find_package_handle_standard_args(CaDiCaL
