@@ -66,6 +66,9 @@ void SATSolver::set_par( idx_type par , int value )
   case( intMaxSATMinBudget ):
    CoreMinBudget = std::max( value , 0 );
    break;
+  case( intMaxIter ):
+   MaxIter = std::max( value , 0 );
+   break;
   default:
    Solver::set_par( par , value );
   }
@@ -91,6 +94,7 @@ int SATSolver::get_int_par( idx_type par ) const
   case( intMaxSAT ):          return( MaxSATAlg );
   case( intMaxSATTrim ):      return( CoreTrim );
   case( intMaxSATMinBudget ): return( CoreMinBudget );
+  case( intMaxIter ):         return( MaxIter );
   default:                    return( Solver::get_int_par( par ) );
   }
  }
@@ -275,6 +279,7 @@ int SATSolver::compute( bool changedvars )
  v_failed.assign( f_sat->get_number_variables() , 0 );
  f_ub = Inf< double >();
  v_model.clear();
+ f_iter_stop = false;
 
  int res;
  if( MaxSATAlg == 1 )
@@ -318,7 +323,10 @@ int SATSolver::compute( bool changedvars )
    f_status = kInfeasible;
    break;
   default:
-   f_status = time_is_up() ? int( kStopTime ) : int( kError );
+   // the budget of intMaxIter ends the relaxation of the cores found so far
+   // [see the comments to the class]
+   f_status = f_iter_stop ? int( kOK ) :
+	      ( time_is_up() ? int( kStopTime ) : int( kError ) );
   }
 
  if( f_log )
@@ -595,7 +603,15 @@ int SATSolver::oll( const std::vector< int > & fixed )
  std::vector< int > as;
  std::vector< int > core;
  std::vector< int > cond;
- for( ; ; ) {
+ // the budget of intMaxIter, but for a node whose x are all fixed, which
+ // has nothing left to branch on
+ const int budget = ( fixed.size() >= f_sat->get_number_variables() ) ?
+		    Inf< int >() : MaxIter;
+ for( int iter = 0 ; ; ++iter ) {
+  if( iter >= budget ) {
+   f_iter_stop = true;
+   return( 0 );
+   }
   as = fixed;
   for( auto lit : order )
    if( ( soft[ lit ].w > 0 ) && ( soft[ lit ].w >= tau ) )
@@ -676,7 +692,8 @@ Solver::OFValue SATSolver::get_lb( void )
 
 Solver::OFValue SATSolver::get_ub( void )
 {
- return( f_status == kOK ? OFValue( f_ub ) : Inf< OFValue >() );
+ return( ( ( f_status == kOK ) || ( f_status == kStopTime ) ) ?
+	 OFValue( f_ub ) : Inf< OFValue >() );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -710,6 +727,70 @@ bool SATSolver::is_failed( unsigned int i ) const
 {
  return( ( f_status == kInfeasible ) && ( i < v_failed.size() ) &&
 	 v_failed[ i ] );
+ }
+
+/*--------------------------------------------------------------------------*/
+/*------------------- METHODS OF THE RelaxationSolver ----------------------*/
+/*--------------------------------------------------------------------------*/
+
+std::vector< Change * > SATSolver::branch( void )
+{
+ f_sat->generate_abstract_variables();
+ const auto & x = std::as_const( *f_sat ).get_variables();
+ const auto n = x.size();
+ const auto & clauses = f_sat->get_clauses();
+
+ // the clause of each relaxation variable
+ std::unordered_map< int , unsigned int > relax_clause;
+ for( unsigned int i = 0 ; i < v_soft.size() ; ++i )
+  if( std::abs( v_soft[ i ] ) > int( n ) )
+   relax_clause[ std::abs( v_soft[ i ] ) ] = i;
+
+ // the score of each x: the soft assumptions of the cores it is in, a
+ // relaxation variable shared among the variables of its clause; the
+ // outputs of the totalizers count for nothing
+ std::vector< double > score( n , 0 );
+ for( const auto & core : v_cores )
+  for( auto lit : core.lits ) {
+   const auto v = std::abs( lit );
+   if( v <= int( n ) )
+    score[ v - 1 ] += 1;
+   else {
+    const auto it = relax_clause.find( v );
+    if( it != relax_clause.end() ) {
+     const auto & cl = clauses[ it->second ];
+     for( auto l : cl )
+      score[ std::abs( l ) - 1 ] += 1.0 / double( cl.size() );
+     }
+    }
+   }
+
+ unsigned int best = n;
+ for( unsigned int i = 0 ; i < n ; ++i )
+  if( ( ! x[ i ].is_fixed() ) &&
+      ( ( best == n ) || ( score[ i ] > score[ best ] ) ) )
+   best = i;
+ if( best == n )
+  throw( std::logic_error( "SATSolver::branch: all the variables are "
+			   "fixed" ) );
+
+ // the value of the best solution first
+ const double first = ( ( best < v_model.size() ) && v_model[ best ] ) ? 1 : 0;
+ return( std::vector< Change * >{
+	   new SATBlockChange( SATBlockChange::eFixX , Block::Subset{ best } ,
+			       std::vector< double >{ first } ) ,
+	   new SATBlockChange( SATBlockChange::eFixX , Block::Subset{ best } ,
+			       std::vector< double >{ 1 - first } ) } );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+int SATSolver::classify( const sp_Mod & mod )
+{
+ if( auto smod = std::dynamic_pointer_cast< const SATBlockMod >( mod ) )
+  if( smod->type() == SATBlockMod::eChgCost )
+   return( eModObjective );
+ return( eModEverything );
  }
 
 /*--------------------------------------------------------------------------*/

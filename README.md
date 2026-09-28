@@ -26,9 +26,13 @@ the hard clauses, those added on top of those it has, the fixed variables as
 assumptions (so that, after an unsatisfiable answer, it tells which of them
 are in its reason) and the time limit. With the parameter `intMaxSAT` it
 solves the weighted MaxSAT by the core-guided algorithm OLL, with the
-assumptions stratified by weight and the cores trimmed and minimized.
-`CaDiCaLSATSolver` and `MiniSATSolver` are the ones for CaDiCaL and MiniSat,
-each built if its SAT solver is found.
+assumptions stratified by weight and the cores trimmed and minimized; OLL is
+incremental, i.e., the cores it finds are used again, with the weights of
+the moment, by the following solves of a changed instance. A `SATSolver` is
+also a relaxation for the `BranchAndXSolver`, which enumerates on it by
+fixing variables (`SATBlockChange`), OLL running within a budget of calls of
+the SAT solver in each node. `CaDiCaLSATSolver` and `MiniSATSolver` are the
+ones for CaDiCaL and MiniSat, each built if its SAT solver is found.
 
 `smspp_satgen` generates random weighted partial MaxSAT instances made of
 groups of clauses bound by a tunable fraction of linking clauses, which is the

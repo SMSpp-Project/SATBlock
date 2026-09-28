@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "Block.h"
+#include "Change.h"
 #include "ColVariable.h"
 #include "FRealObjective.h"
 #include "FRowConstraint.h"
@@ -725,6 +726,124 @@ class SATBlockSbstMod : public SATBlockMod
 /*--------------------------------------------------------------------------*/
 
  };  // end( class( SATBlockSbstMod ) )
+
+/*--------------------------------------------------------------------------*/
+/*-------------------------- CLASS SATBlockChange --------------------------*/
+/*--------------------------------------------------------------------------*/
+/// a Change fixing or unfixing some ColVariable x of a SATBlock
+/** A SATBlockChange of type eFixX fixes the ColVariable x of the given
+ * indices at the given values (true if larger than 1/2), and one of type
+ * eUnfixX unfixes them [see Variable::is_fixed()]; the abstract variables of
+ * the SATBlock are generated if they are not there. A fixing is what a
+ * branching on the SATBlock does, and a :Solver of the SATBlock that reads
+ * the fixed x, such as the SATSolver through its assumptions, sees it.
+ *
+ * With doUndo, apply() returns the SATBlockChange that brings the x back,
+ * i.e., one of type eUnfixX after eFixX, and one of type eFixX at the
+ * previous values after eUnfixX; fixing a variable already fixed, or
+ * unfixing one that is not, throws, since the undo could not tell it.
+ *
+ * In netCDF a SATBlockChange is a group with, besides the "type" of every
+ * Change, the attribute "SATBlockChange_type" and the variables "Index" and
+ * "Value" along the dimension "NumVar" (the latter not there for eUnfixX). */
+
+class SATBlockChange : public Change
+{
+/*----------------------- PUBLIC PART OF THE CLASS -------------------------*/
+
+ public:
+
+/*------------------------------ PUBLIC TYPES ------------------------------*/
+ /// the types of SATBlockChange
+
+ enum SATBlock_chg_type {
+  eFixX = 0 ,  ///< fix some x at the given values
+  eUnfixX ,    ///< unfix some x
+  eEmpty       ///< nothing, for the factory
+  };
+
+/*------------------------ CONSTRUCTOR & DESTRUCTOR ------------------------*/
+ /// constructor: takes the type, the indices and the values, "consumed"
+
+ explicit SATBlockChange( int type = eEmpty , Block::Subset && nms = {} ,
+			  std::vector< double > && values = {} )
+  : f_type( type ) , f_nms( std::move( nms ) ) ,
+    f_values( std::move( values ) ) {}
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// destructor, does nothing
+
+ ~SATBlockChange() override = default;
+
+/*----------------------- PUBLIC METHODS OF THE CLASS ----------------------*/
+ /// applies the SATBlockChange to a SATBlock, returning the undo if asked
+
+ Change * apply( Block * block , bool doUndo = false ,
+		 ModParam issueMod = eNoBlck ,
+		 ModParam issueAMod = eNoBlck ) override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// reads the SATBlockChange out of a netCDF group
+
+ void deserialize( const netCDF::NcGroup & group ) override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// writes the SATBlockChange into a netCDF group
+
+ void serialize( netCDF::NcGroup & group ) const override;
+
+ using Change::serialize;  // keep the other serialize() visible
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the type of the SATBlockChange
+
+ [[nodiscard]] int type( void ) const { return( f_type ); }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the indices of the x
+
+ [[nodiscard]] Block::c_Subset & nms( void ) const { return( f_nms ); }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the values of the x (for eFixX)
+
+ [[nodiscard]] const std::vector< double > & values( void ) const {
+  return( f_values );
+  }
+
+/*---------------------- PROTECTED PART OF THE CLASS -----------------------*/
+
+ protected:
+
+/*--------------------------- PROTECTED METHODS ----------------------------*/
+ /// prints the SATBlockChange
+
+ void print( std::ostream & output ) const override {
+  output << "SATBlockChange[" << this << "]: "
+	 << ( f_type == eFixX ? "fix " : ( f_type == eUnfixX ? "unfix "
+							     : "empty " ) )
+	 << f_nms.size() << " x" << std::endl;
+  }
+
+/*---------------------------- PROTECTED FIELDS ----------------------------*/
+
+ int f_type;                      ///< the type
+
+ Block::Subset f_nms;             ///< the indices of the x
+
+ std::vector< double > f_values;  ///< the values of the x (for eFixX)
+
+/*------------------------ PRIVATE PART OF THE CLASS -----------------------*/
+
+ private:
+
+/*---------------------------- PRIVATE FIELDS ------------------------------*/
+
+ SMSpp_insert_in_factory_h;
+
+/*--------------------------------------------------------------------------*/
+
+ };  // end( class( SATBlockChange ) )
 
 /** @} end( group( SATBlock_CLASSES ) ) */
 

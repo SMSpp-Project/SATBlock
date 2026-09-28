@@ -43,6 +43,10 @@ using namespace SMSpp_di_unipi_it;
 
 SMSpp_insert_in_factory_cpp_1( SATBlock );
 
+// register SATBlockChange in the Change factory
+
+SMSpp_insert_in_factory_cpp_1( SATBlockChange );
+
 /*--------------------------------------------------------------------------*/
 /*------------------------- OTHER INITIALIZATIONS --------------------------*/
 /*--------------------------------------------------------------------------*/
@@ -971,6 +975,108 @@ void SATBlock::guts_of_destructor( void )
  v_weights.clear();
  f_n_var = 0;
  AR = 0;
+ }
+
+/*--------------------------------------------------------------------------*/
+/*------------------------ METHODS OF SATBlockChange -----------------------*/
+/*--------------------------------------------------------------------------*/
+
+// the x are the abstract representation, and there is no physical one of
+// the fixings: issueAMod is what goes with them
+Change * SATBlockChange::apply( Block * block , bool doUndo ,
+				ModParam , ModParam issueAMod )
+{
+ auto sat = dynamic_cast< SATBlock * >( block );
+ if( ! sat )
+  throw( std::invalid_argument( "SATBlockChange::apply: the Block is not a "
+				"SATBlock" ) );
+ if( ( f_type != eFixX ) && ( f_type != eUnfixX ) )
+  throw( std::invalid_argument( "SATBlockChange::apply: empty "
+				"SATBlockChange" ) );
+ if( ( f_type == eFixX ) && ( f_values.size() != f_nms.size() ) )
+  throw( std::invalid_argument( "SATBlockChange::apply: " +
+				std::to_string( f_values.size() ) +
+				" values for " + std::to_string( f_nms.size() )
+				+ " variables" ) );
+
+ sat->generate_abstract_variables();
+ auto & x = sat->get_variables();
+
+ // all checked first, so that nothing is changed if anything is wrong
+ for( auto i : f_nms ) {
+  if( i >= x.size() )
+   throw( std::invalid_argument( "SATBlockChange::apply: variable " +
+				 std::to_string( i ) + " out of range" ) );
+  if( x[ i ].is_fixed() == ( f_type == eFixX ) )
+   throw( std::invalid_argument( "SATBlockChange::apply: variable " +
+				 std::to_string( i ) + ( f_type == eFixX ?
+							 " already fixed" :
+							 " not fixed" ) ) );
+  }
+
+ Change * undo = nullptr;
+ if( doUndo ) {
+  if( f_type == eFixX )
+   undo = new SATBlockChange( eUnfixX , Block::Subset( f_nms ) );
+  else {
+   std::vector< double > old;
+   old.reserve( f_nms.size() );
+   for( auto i : f_nms )
+    old.push_back( x[ i ].get_value() );
+   undo = new SATBlockChange( eFixX , Block::Subset( f_nms ) ,
+			      std::move( old ) );
+   }
+  }
+
+ // the values go before the fixing, which set_value() of a fixed Variable
+ // would not allow
+ for( std::size_t k = 0 ; k < f_nms.size() ; ++k ) {
+  auto & xi = x[ f_nms[ k ] ];
+  if( f_type == eFixX ) {
+   xi.set_value( f_values[ k ] > 0.5 ? 1 : 0 );
+   xi.is_fixed( true , issueAMod );
+   }
+  else
+   xi.is_fixed( false , issueAMod );
+  }
+
+ return( undo );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlockChange::deserialize( const netCDF::NcGroup & group )
+{
+ auto ftype = group.getAtt( "SATBlockChange_type" );
+ if( ftype.isNull() )
+  throw( std::invalid_argument( "SATBlockChange::deserialize: no type" ) );
+ ftype.getValues( & f_type );
+
+ f_nms.clear();
+ f_values.clear();
+ const auto nv = group.getDim( "NumVar" );
+ if( nv.isNull() )
+  return;
+ f_nms.resize( nv.getSize() );
+ group.getVar( "Index" ).getVar( f_nms.data() );
+ const auto val = group.getVar( "Value" );
+ if( ! val.isNull() ) {
+  f_values.resize( nv.getSize() );
+  val.getVar( f_values.data() );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlockChange::serialize( netCDF::NcGroup & group ) const
+{
+ Change::serialize( group );
+ group.putAtt( "SATBlockChange_type" , netCDF::NcInt() , f_type );
+ const auto nv = group.addDim( "NumVar" , f_nms.size() );
+ group.addVar( "Index" , netCDF::NcUint() , nv ).putVar( f_nms.data() );
+ if( f_type == eFixX )
+  group.addVar( "Value" , netCDF::NcDouble() , nv ).putVar(
+							     f_values.data() );
  }
 
 /*--------------------------------------------------------------------------*/

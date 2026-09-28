@@ -944,6 +944,131 @@ static void test_oll_incremental( void )
  }
 
 /*--------------------------------------------------------------------------*/
+/// a depth-first branch and bound on the SATSolver as a RelaxationSolver,
+/// returning the best value found below the current node
+
+static double dive( SATSolver * s , double incumbent , unsigned & nodes )
+{
+ ++nodes;
+ const int status = s->compute();
+ if( status == Solver::kInfeasible )
+  return( incumbent );
+ // with intMaxIter, kOK is the relaxation of the cores found so far: the
+ // node is closed when its bound meets the incumbent
+ assert( status == Solver::kOK );
+ if( s->has_true_var_solution() )
+  incumbent = std::min( incumbent , double( s->get_true_ub() ) );
+ assert( s->get_lb() <= s->get_ub() );
+ if( s->get_lb() >= incumbent )
+  return( incumbent );
+ for( auto chg : s->branch() ) {
+  auto undo = s->apply( chg , true );
+  incumbent = dive( s , incumbent , nodes );
+  s->apply( undo );
+  delete undo;
+  delete chg;
+  }
+ return( incumbent );
+ }
+
+/*--------------------------------------------------------------------------*/
+/// the SATBlockChange, and the SATSolver as a RelaxationSolver: a branch
+/// and bound with a budget of 2 calls of the SAT solver per node against
+/// the enumeration on random instances
+
+static void test_branch( void )
+{
+ const auto inf = Inf< double >();
+
+ // fix, undo, unfix, undo, and the netCDF round trip
+ {
+  SATBlock b;
+  load_string( b , "p cnf 3 1\n1 2 3 0\n" );
+  auto & x = b.get_variables();
+  SATBlockChange fix( SATBlockChange::eFixX , { 0 , 2 } , { 1 , 0 } );
+  auto undo = fix.apply( & b , true );
+  assert( x[ 0 ].is_fixed() && ( x[ 0 ].get_value() == 1 ) &&
+	  ( ! x[ 1 ].is_fixed() ) &&
+	  x[ 2 ].is_fixed() && ( x[ 2 ].get_value() == 0 ) );
+  bool threw = false;  // already fixed: the undo could not tell it
+  try { fix.apply( & b ); } catch( std::invalid_argument & ) { threw = true; }
+  assert( threw );
+  auto redo = undo->apply( & b , true );
+  assert( ( ! x[ 0 ].is_fixed() ) && ( ! x[ 2 ].is_fixed() ) );
+  // the undo of an unfixing fixes back at the old values
+  assert( dynamic_cast< SATBlockChange * >( redo )->type() ==
+	  SATBlockChange::eFixX );
+  delete redo->apply( & b );
+  assert( x[ 0 ].is_fixed() && ( x[ 0 ].get_value() == 1 ) &&
+	  x[ 2 ].is_fixed() && ( x[ 2 ].get_value() == 0 ) );
+  delete undo;
+  delete redo;
+
+  const auto file = std::filesystem::temp_directory_path() /
+		    "SATBlockChange_test.nc4";
+  fix.serialize( file.string() );
+  netCDF::NcFile f( file.string() , netCDF::NcFile::read );
+  auto back = Change::new_Change( f.getGroup( "Change_0" ) );
+  auto sback = dynamic_cast< SATBlockChange * >( back );
+  assert( sback && ( sback->type() == SATBlockChange::eFixX ) &&
+	  ( sback->nms() == Block::Subset{ 0 , 2 } ) &&
+	  ( sback->values() == std::vector< double >{ 1 , 0 } ) );
+  delete back;
+  std::filesystem::remove( file );
+  }
+
+ std::srand( 2718 );
+ unsigned checked = 0 , branched = 0 , nodes = 0;
+ for( unsigned t = 0 ; t < 100 ; ++t ) {
+  const unsigned n = 4 + std::rand() % 7;          // 4 to 10 variables
+  const unsigned m = n + std::rand() % ( 3 * n );
+  SATBlock::v_Clause clauses( m );
+  SATBlock::v_Weight weights( m );
+  for( unsigned c = 0 ; c < m ; ++c ) {
+   const unsigned len = 1 + std::rand() % 3;
+   for( unsigned l = 0 ; l < len ; ++l )
+    clauses[ c ].push_back( int( 1 + std::rand() % n ) *
+			    ( std::rand() % 2 ? 1 : -1 ) );
+   weights[ c ] = ( std::rand() % 4 == 0 ) ? inf : 1 + std::rand() % 20;
+   }
+  SATBlock b;
+  b.load( n , std::move( clauses ) , std::move( weights ) );
+  b.generate_abstract_variables();
+  if( t % 2 ) {
+   std::vector< double > costs( n );
+   for( auto & c : costs )
+    c = int( std::rand() % 21 ) - 10;
+   b.chg_costs( costs , Block::Range( 0 , n ) );
+   }
+
+  double best = inf;
+  for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
+   set_values( b , mask );
+   if( b.is_feasible() )
+    best = std::min( best , b.get_objective_value() );
+   }
+
+  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+  s->set_par( SATSolver::intMaxSAT , 1 );
+  s->set_par( Solver::intMaxIter , 2 );
+  b.register_Solver( s );
+  unsigned here = 0;
+  const double found = dive( s , inf , here );
+  assert( found == best );
+  for( auto & xi : b.get_variables() )  // the undos have unfixed them all
+   assert( ! xi.is_fixed() );
+  nodes += here;
+  if( here > 1 )
+   ++branched;
+  b.unregister_Solvers( true );
+  ++checked;
+  }
+ std::cout << solver_name << ": branch and bound optimal on " << checked
+	   << " random instances, " << branched << " of them branched, "
+	   << nodes << " nodes" << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
 /// OLL on the instances of the MaxSAT Evaluation whose optimum is known: the
 /// optimum if it finishes, bounds around it if the time limit stops it
 
@@ -1056,6 +1181,7 @@ int main( int argc , char ** argv )
  test_solver();
  test_oll();
  test_oll_incremental();
+ test_branch();
  test_oll_mse();
  test_solver_satlib();
 #endif
@@ -1064,6 +1190,7 @@ int main( int argc , char ** argv )
  test_solver();
  test_oll();
  test_oll_incremental();
+ test_branch();
  test_oll_mse();
  test_solver_satlib();
 #endif

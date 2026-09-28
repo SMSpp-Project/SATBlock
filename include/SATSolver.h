@@ -31,6 +31,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "ChangeSolver.h"
 #include "SATBlock.h"
 #include "Solver.h"
 
@@ -144,9 +145,27 @@ namespace SMSpp_di_unipi_it
  * as the subproblems of a Lagrangian decomposition with different
  * multipliers, cheaper to solve than each of them from scratch. A core
  * with a fixed variable in its reason is kept only for the compute() whose
- * fixed variables include those, and it never becomes a clause. */
+ * fixed variables include those, and it never becomes a clause.
+ *
+ * A SATSolver is also a RelaxationSolver [see ChangeSolver.h], so that the
+ * BranchAndXSolver can enumerate on it. A node is a set of fixed x, which
+ * the SATBlockChange of the branching fix [see SATBlock.h] and which are
+ * assumptions: the cores found in the nodes below keep holding while those
+ * fixings are there, which is what the enumeration reuses going down. With
+ * intMaxIter set, OLL stops after that many calls of the SAT solver in its
+ * main loop (but in a node whose x are all fixed, which has nothing left to
+ * branch on), and its relaxation is then the one made of the cores found so
+ * far: compute() returns kOK, as a RelaxationSolver does when its bound is
+ * there, get_lb() being that bound and get_ub() the value of the best
+ * solution found (+INF if none), which is also the "true" solution [see
+ * get_true_ub()], so that kOK means that get_lb() == get_ub() only without
+ * intMaxIter; the enumeration closes a node when the two meet. branch()
+ * fixes the unfixed x that is in the most soft assumptions of the cores
+ * found so far (a relaxation variable counting for the variables of its
+ * clause, shared among them), making two children, the first with the value
+ * x has in the best solution found, so that diving follows that solution. */
 
-class SATSolver : public Solver
+class SATSolver : public Solver , public RelaxationSolver
 {
 /*----------------------- PUBLIC PART OF THE CLASS -------------------------*/
 
@@ -259,8 +278,10 @@ class SATSolver : public Solver
  /// true if the last compute() has found a solution
 
  [[nodiscard]] bool has_var_solution( void ) override {
-  return( ( f_status == kOK ) ||
-	  ( ( f_status == kStopTime ) && ( ! v_model.empty() ) ) );
+  if( MaxSATAlg == 1 )  // OLL keeps the best solution it finds
+   return( ( ( f_status == kOK ) || ( f_status == kStopTime ) ) &&
+	   ( ! v_model.empty() ) );
+  return( f_status == kOK );
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -286,6 +307,57 @@ class SATSolver : public Solver
  /// returns the name and version of the SAT solver
 
  [[nodiscard]] virtual std::string signature( void ) const = 0;
+
+/*------------------- METHODS OF THE RelaxationSolver ----------------------*/
+ /// applies a Change to the SATBlock, returning the undo if asked
+
+ Change * apply( Change * chg , bool doUndo = false ) override {
+  return( chg->apply( f_sat , doUndo ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the children of the current node: an unfixed x fixed to either value
+ /** Returns two SATBlockChange of type eFixX on the same unfixed x, chosen
+  * and ordered as the comments to the class say; throws if all the x are
+  * fixed, in which case compute() has solved the node. */
+
+ std::vector< Change * > branch( void ) override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// a change of the costs only touches the objective, anything else may do
+ /// more
+
+ [[nodiscard]] int classify( const sp_Mod & mod ) override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the value of the best solution found, +INF if none
+
+ [[nodiscard]] OFValue get_true_ub( void ) override {
+  return( has_var_solution() ? OFValue( f_ub ) : Inf< OFValue >() );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// true if the last compute() has found a solution
+
+ [[nodiscard]] bool has_true_var_solution( void ) override {
+  return( has_var_solution() );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// writes the best solution found, as get_var_solution()
+
+ void get_true_var_solution( Configuration * solc = nullptr ) override {
+  get_var_solution( solc );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// a ColVariableSolution of the best solution found, which is written into
+ /// the SATBlock first
+
+ Solution * get_true_solution( Configuration * solc = nullptr ) override {
+  get_var_solution( solc );
+  return( f_sat->get_Solution( solc , false ) );
+  }
 
 /*---------------------- PROTECTED PART OF THE CLASS -----------------------*/
 
@@ -415,6 +487,10 @@ class SATSolver : public Solver
  int CoreTrim = 5;             ///< the parameter intMaxSATTrim
 
  int CoreMinBudget = 1000;     ///< the parameter intMaxSATMinBudget
+
+ int MaxIter = Inf< int >();   ///< the parameter intMaxIter
+
+ bool f_iter_stop = false;     ///< if OLL has stopped for intMaxIter
 
  int f_next_var = 0;           ///< the last variable of the SAT solver
 

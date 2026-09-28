@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and on the fixed variables in its reason but not on the weights; a
   sequence of close instances, such as the subproblems of a Lagrangian
   decomposition, calls the SAT solver only for what those cores do not say
+- `SATBlockChange`, the `Change` fixing or unfixing a set of ColVariable x
+  of a `SATBlock`, returning the change that undoes it, and its netCDF form
+- `SATSolver` is a `RelaxationSolver`, so that `BranchAndXSolver` enumerates
+  on it: with `intMaxIter` OLL stops after that many calls of the SAT
+  solver in a node and returns `kOK`, as a relaxation does, its lower bound
+  (of the cores found so far) and best solution being what the enumeration
+  reads, and `branch()` fixes the unfixed x that is in
+  the most assumptions of the cores found, the child with the value of the
+  best solution first, so that a dive follows that solution; the fixings
+  are assumptions, whose cores the nodes below reuse
 
 ### Changed
 
@@ -25,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `SATSolver::get_ub()` after `kStopTime` gave +INF, while the value of the
+  best solution found is what it documents
 - the data archives are extracted by `cmake -E tar`, which also works with
   the tar of macOS, where the option `--warning=no-unknown-keyword` of GNU
   tar stopped the build.
