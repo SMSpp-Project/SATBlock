@@ -27,6 +27,7 @@
 /*--------------------------------------------------------------------------*/
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -181,6 +182,8 @@ namespace SMSpp_di_unipi_it
  * make()], so that a library can add one without SATSolver knowing it, such
  * as the learned rule of SATBlockML, which needs Torch. */
 
+class SATSolver;  // the Solver whose branch() the rule serves
+
 class SATBranchRule
 {
 /*----------------------- PUBLIC PART OF THE CLASS -------------------------*/
@@ -199,12 +202,13 @@ class SATBranchRule
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// chooses the unfixed x to branch on and the value of the first child
- /** Sets \p var to the index of an unfixed ColVariable x of \p sat and
-  * \p first to the value (0 or 1) of the first child, returning true;
-  * returns false if the rule has nothing to say, the rule of SATSolver
-  * deciding then. */
+ /** Sets \p var to the index of an unfixed ColVariable x of the SATBlock
+  * of \p solver and \p first to the value (0 or 1) of the first child,
+  * returning true; returns false if the rule has nothing to say, the rule
+  * of SATSolver deciding then. The rule may read what the SATSolver knows
+  * of the node, e.g., its best solution and the scores of its cores. */
 
- virtual bool choose( const SATBlock & sat , unsigned int & var ,
+ virtual bool choose( const SATSolver & solver , unsigned int & var ,
 		      double & first ) = 0;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -432,6 +436,28 @@ class SATSolver : public Solver , public RelaxationSolver
  /// returns the name and version of the SAT solver
 
  [[nodiscard]] virtual std::string signature( void ) const = 0;
+
+/*--------------------- METHODS FOR READING THE NODE -----------------------*/
+ /// the SATBlock being solved
+
+ [[nodiscard]] const SATBlock * get_SATBlock( void ) const {
+  return( f_sat );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the best solution OLL has found in the last compute(), empty if none
+
+ [[nodiscard]] const std::vector< unsigned char > & get_best_solution( void )
+  const { return( v_model ); }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the score of each x in the cores found so far
+ /** The number of soft assumptions of the cores found so far (by this SAT
+  * solver) each ColVariable x is in, a relaxation variable counting for
+  * the variables of its clause, shared among them; what branch() fixes by
+  * default is the unfixed x of largest score. */
+
+ [[nodiscard]] std::vector< double > core_scores( void ) const;
 
 /*------------------- METHODS OF THE RelaxationSolver ----------------------*/
  /// applies a Change to the SATBlock, returning the undo if asked
@@ -661,6 +687,83 @@ class SATSolver : public Solver , public RelaxationSolver
 /*--------------------------------------------------------------------------*/
 
  };  // end( class( SATSolver ) )
+
+/*--------------------------------------------------------------------------*/
+/*------------------------- CLASS SATResidualGraph -------------------------*/
+/*--------------------------------------------------------------------------*/
+/// the graph of the residual formula of a node of the enumeration
+/** The graph that Graph-Q-SAT (Kurin, Godil, Whiteson, Catanzaro, NeurIPS
+ * 2020) makes of a formula, here the residual one of the fixings of the
+ * SATBlock of a SATSolver, which is what a learned SATBranchRule reads and
+ * what an environment for learning it gives:
+ *
+ * - the vertices are the unfixed ColVariable x, then the clauses that no
+ *   fixed x satisfies, in their order;
+ *
+ * - each literal of such a clause on an unfixed x gives two edges, from
+ *   the variable to the clause and back, with the row [ 0 , 1 ] if the
+ *   literal is positive and [ 1 , 0 ] if it is negated.
+ *
+ * With eGQSAT the rows of the vertices are those of Graph-Q-SAT, [ 1 , 0 ]
+ * for a variable and [ 0 , 1 ] for a clause. With eMaxSAT they have seven
+ * columns: the same two; for a variable (columns 2 to 4, 0 for a clause),
+ * its value in the best solution found (1/2 if none), its score in the
+ * cores [see SATSolver::core_scores()] divided by the largest one, and its
+ * cost divided by the largest weight; for a clause (columns 5 and 6, 0 for
+ * a variable), its weight divided by the largest one (1 if hard), and 1 if
+ * it is hard. */
+
+class SATResidualGraph
+{
+/*----------------------- PUBLIC PART OF THE CLASS -------------------------*/
+
+ public:
+
+/*------------------------------ PUBLIC TYPES ------------------------------*/
+ /// the columns of the rows of the vertices
+
+ enum features_type {
+  eGQSAT = 0 ,  ///< those of Graph-Q-SAT: variable or clause
+  eMaxSAT       ///< those, plus what a weighted MaxSAT node has
+  };
+
+/*----------------------- PUBLIC METHODS OF THE CLASS ----------------------*/
+ /// the number of columns of the rows of the vertices
+
+ [[nodiscard]] static unsigned int n_features( int features ) {
+  return( features == eMaxSAT ? 7 : 2 );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// builds the graph of the node of \p solver, with the given columns
+ /** Builds the graph of the residual formula of the current fixings of the
+  * SATBlock of \p solver, whose rows have the columns of \p features;
+  * returns false, with an empty graph, if the residual formula has no
+  * unfixed variable or no clause. */
+
+ bool build( const SATSolver & solver , int features = eGQSAT );
+
+/*---------------------------- PUBLIC FIELDS -------------------------------*/
+
+ unsigned int n_col = 0;           ///< the columns of the rows of vertices
+
+ long n_var = 0;                   ///< the variable vertices, the first ones
+
+ long n_clause = 0;                ///< the clause vertices, after them
+
+ std::vector< float > vertex;      ///< the rows of the vertices, one by one
+
+ std::vector< int64_t > source;    ///< the source of each edge
+
+ std::vector< int64_t > target;    ///< the target of each edge
+
+ std::vector< float > edge;        ///< the rows of the edges, one by one
+
+ std::vector< unsigned int > var;  ///< the x of each variable vertex
+
+/*--------------------------------------------------------------------------*/
+
+ };  // end( class( SATResidualGraph ) )
 
 /** @} end( group( SATSolver_CLASSES ) ) */
 

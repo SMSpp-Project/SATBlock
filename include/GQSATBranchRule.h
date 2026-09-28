@@ -56,21 +56,12 @@ namespace SMSpp_di_unipi_it
  * Catanzaro, NeurIPS 2020), such as its variant with graph attention,
  * GAT-Q-SAT. The policy is a TorchScript module, read by load() out of the
  * file of strBranchRuleFile, whose forward( x , edge_index , edge_attr , u )
- * returns two Q-values per vertex of the graph that Graph-Q-SAT makes of
- * the residual formula:
- *
- * - the vertices are the unfixed ColVariable x of the SATBlock, then its
- *   clauses that no fixed x satisfies, x having a row [ 1 , 0 ] and a
- *   clause a row [ 0 , 1 ];
- *
- * - each literal of such a clause on an unfixed x gives two edges, from the
- *   variable to the clause and back, with the row [ 0 , 1 ] if the literal
- *   is positive and [ 1 , 0 ] if it is negated;
- *
- * - u is the single global row [ 0 ].
- *
- * The weights of the clauses have no place in that graph, which is the one
- * the policy was trained on. The largest of the Q-values of the variables,
+ * returns two Q-values per vertex of the graph of the residual formula of
+ * the node [see SATResidualGraph], u being the single global row [ 0 ]. The
+ * columns of the rows of the vertices are those of the integer attribute
+ * "features" of the module [see SATResidualGraph::features_type], if it
+ * has one, and those of Graph-Q-SAT otherwise, where the weights of the
+ * clauses have no place. The largest of the Q-values of the variables,
  * the first of a variable meaning "true" and the second "false", gives the
  * variable and the value of the first child. choose() has nothing to say if
  * no policy has been read, or if the residual formula has no clause. */
@@ -94,7 +85,7 @@ class GQSATBranchRule : public SATBranchRule
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// chooses the variable and the value by the Q-values of the policy
 
- bool choose( const SATBlock & sat , unsigned int & var ,
+ bool choose( const SATSolver & solver , unsigned int & var ,
 	      double & first ) override;
 
 /*----------------------- PRIVATE PART OF THE CLASS ------------------------*/
@@ -104,6 +95,8 @@ class GQSATBranchRule : public SATBranchRule
 /*---------------------------- PRIVATE FIELDS ------------------------------*/
 
  std::unique_ptr< torch::jit::Module > f_policy;  ///< the policy, if read
+
+ int f_features = SATResidualGraph::eGQSAT;  ///< the columns it reads
 
 /*--------------------------------------------------------------------------*/
 

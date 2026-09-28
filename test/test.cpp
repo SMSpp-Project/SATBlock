@@ -1069,6 +1069,64 @@ static void test_branch( void )
  }
 
 /*--------------------------------------------------------------------------*/
+/// the graph of the residual formula: its vertices, edges and rows
+
+static void test_residual_graph( void )
+{
+ const auto inf = Inf< double >();
+
+ // x1 or x2 hard, not x1 of weight 4, x2 or not x3 or x4 of weight 2, x4
+ // alone of weight 1, and the cost 3 on x3
+ SATBlock b;
+ b.load( 4 , { { 1 , 2 } , { -1 } , { 2 , -3 , 4 } , { 4 } } ,
+	 { inf , 4 , 2 , 1 } );
+ b.generate_abstract_variables();
+ std::vector< double > c = { 0 , 0 , 3 , 0 };
+ b.chg_costs( c , Block::Range( 0 , 4 ) );
+ auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+ b.register_Solver( s );
+ auto & x = b.get_variables();
+
+ // nothing fixed: 4 variables, 4 clauses, 2 edges per literal
+ SATResidualGraph g;
+ assert( g.build( * s ) && ( g.n_col == 2 ) && ( g.n_var == 4 ) &&
+	 ( g.n_clause == 4 ) && ( g.source.size() == 2 * 7 ) &&
+	 ( g.edge.size() == 2 * g.source.size() ) &&
+	 ( g.vertex.size() == 8 * 2 ) );
+ // the first literal, x1 positive, from variable 0 to clause 4 and back
+ assert( ( g.source[ 0 ] == 0 ) && ( g.target[ 0 ] == 4 ) &&
+	 ( g.source[ 1 ] == 4 ) && ( g.target[ 1 ] == 0 ) &&
+	 ( g.edge[ 0 ] == 0 ) && ( g.edge[ 1 ] == 1 ) );
+ // not x1 in clause 5: the row [ 1 , 0 ]
+ assert( ( g.target[ 4 ] == 5 ) && ( g.edge[ 8 ] == 1 ) &&
+	 ( g.edge[ 9 ] == 0 ) );
+ assert( ( g.vertex[ 0 ] == 1 ) && ( g.vertex[ 1 ] == 0 ) &&
+	 ( g.vertex[ 4 * 2 ] == 0 ) && ( g.vertex[ 4 * 2 + 1 ] == 1 ) );
+
+ // x2 fixed true satisfies the 1st and the 3rd clause; x4 fixed false
+ // leaves the 4th with no literal: x1 and x3 are left, and not x1
+ x[ 1 ].set_value( 1 ); x[ 1 ].is_fixed( true );
+ x[ 3 ].set_value( 0 ); x[ 3 ].is_fixed( true );
+ assert( g.build( * s , SATResidualGraph::eMaxSAT ) && ( g.n_col == 7 ) &&
+	 ( g.n_var == 2 ) && ( g.n_clause == 1 ) &&
+	 ( g.var == std::vector< unsigned int >{ 0 , 2 } ) &&
+	 ( g.source.size() == 2 ) );
+ // no solution yet: 1/2; no core: 0; the cost of x3 over the weight 4
+ assert( ( g.vertex[ 2 ] == 0.5f ) && ( g.vertex[ 3 ] == 0 ) &&
+	 ( g.vertex[ 4 ] == 0 ) && ( g.vertex[ 7 + 4 ] == 0.75f ) );
+ // the clause not x1, of weight 4, the largest
+ assert( ( g.vertex[ 14 + 5 ] == 1 ) && ( g.vertex[ 14 + 6 ] == 0 ) );
+
+ // x1 fixed true too: not x1 has no literal left, nothing to say
+ x[ 0 ].set_value( 1 ); x[ 0 ].is_fixed( true );
+ assert( ( ! g.build( * s ) ) && ( g.n_var == 0 ) && g.vertex.empty() );
+ // and all fixed: no variable
+ x[ 2 ].set_value( 0 ); x[ 2 ].is_fixed( true );
+ assert( ! g.build( * s ) );
+ b.unregister_Solvers( true );
+ }
+
+/*--------------------------------------------------------------------------*/
 /// OLL on the instances of the MaxSAT Evaluation whose optimum is known: the
 /// optimum if it finishes, bounds around it if the time limit stops it
 
@@ -1182,6 +1240,7 @@ int main( int argc , char ** argv )
  test_oll();
  test_oll_incremental();
  test_branch();
+ test_residual_graph();
  test_oll_mse();
  test_solver_satlib();
 #endif
@@ -1191,6 +1250,7 @@ int main( int argc , char ** argv )
  test_oll();
  test_oll_incremental();
  test_branch();
+ test_residual_graph();
  test_oll_mse();
  test_solver_satlib();
 #endif

@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   learned by Graph-Q-SAT (such as its variant with graph attention),
   read as a TorchScript module, on the graph Graph-Q-SAT makes of the
   residual formula of the node
+- `SATResidualGraph`, the graph of the residual formula of a node, with the
+  rows of Graph-Q-SAT or, with `eMaxSAT`, also the best solution, the
+  scores of the cores and the costs of the variables and the weights of the
+  clauses, which `GQSATBranchRule` builds as the integer attribute
+  "features" of its module says; `SATSolver::get_best_solution()` and
+  `SATSolver::core_scores()` tell what the SATSolver knows of the node, and
+  `SATBranchRule::choose()` is given the SATSolver
 
 ### Changed
 

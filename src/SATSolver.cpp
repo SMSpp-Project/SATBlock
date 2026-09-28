@@ -809,7 +809,6 @@ std::vector< Change * > SATSolver::branch( void )
  f_sat->generate_abstract_variables();
  const auto & x = std::as_const( *f_sat ).get_variables();
  const auto n = x.size();
- const auto & clauses = f_sat->get_clauses();
 
  auto children = []( unsigned int var , double first ) {
   return( std::vector< Change * >{
@@ -823,7 +822,7 @@ std::vector< Change * > SATSolver::branch( void )
  if( f_rule ) {
   unsigned int var = 0;
   double first = 0;
-  if( f_rule->choose( *f_sat , var , first ) ) {
+  if( f_rule->choose( *this , var , first ) ) {
    if( ( var >= n ) || x[ var ].is_fixed() )
     throw( std::logic_error( "SATSolver::branch: the SATBranchRule " +
 			     BranchRule + " chose the fixed or unknown "
@@ -832,31 +831,7 @@ std::vector< Change * > SATSolver::branch( void )
    }
   }
 
- // the clause of each relaxation variable
- std::unordered_map< int , unsigned int > relax_clause;
- for( unsigned int i = 0 ; i < v_soft.size() ; ++i )
-  if( std::abs( v_soft[ i ] ) > int( n ) )
-   relax_clause[ std::abs( v_soft[ i ] ) ] = i;
-
- // the score of each x: the soft assumptions of the cores it is in, a
- // relaxation variable shared among the variables of its clause; the
- // outputs of the totalizers count for nothing
- std::vector< double > score( n , 0 );
- for( const auto & core : v_cores )
-  for( auto lit : core.lits ) {
-   const auto v = std::abs( lit );
-   if( v <= int( n ) )
-    score[ v - 1 ] += 1;
-   else {
-    const auto it = relax_clause.find( v );
-    if( it != relax_clause.end() ) {
-     const auto & cl = clauses[ it->second ];
-     for( auto l : cl )
-      score[ std::abs( l ) - 1 ] += 1.0 / double( cl.size() );
-     }
-    }
-   }
-
+ const auto score = core_scores();
  unsigned int best = n;
  for( unsigned int i = 0 ; i < n ; ++i )
   if( ( ! x[ i ].is_fixed() ) &&
@@ -873,12 +848,152 @@ std::vector< Change * > SATSolver::branch( void )
 
 /*--------------------------------------------------------------------------*/
 
+std::vector< double > SATSolver::core_scores( void ) const
+{
+ const auto n = f_sat->get_number_variables();
+ const auto & clauses = f_sat->get_clauses();
+
+ // the clause of each relaxation variable
+ std::unordered_map< int , unsigned int > relax_clause;
+ for( unsigned int i = 0 ; i < v_soft.size() ; ++i )
+  if( std::abs( v_soft[ i ] ) > int( n ) )
+   relax_clause[ std::abs( v_soft[ i ] ) ] = i;
+
+ // the soft assumptions of the cores each x is in, a relaxation variable
+ // shared among the variables of its clause; the outputs of the totalizers
+ // count for nothing
+ std::vector< double > score( n , 0 );
+ for( const auto & core : v_cores )
+  for( auto lit : core.lits ) {
+   const auto v = std::abs( lit );
+   if( v <= int( n ) )
+    score[ v - 1 ] += 1;
+   else {
+    const auto it = relax_clause.find( v );
+    if( it != relax_clause.end() ) {
+     const auto & cl = clauses[ it->second ];
+     for( auto l : cl )
+      score[ std::abs( l ) - 1 ] += 1.0 / double( cl.size() );
+     }
+    }
+   }
+ return( score );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 int SATSolver::classify( const sp_Mod & mod )
 {
  if( auto smod = std::dynamic_pointer_cast< const SATBlockMod >( mod ) )
   if( smod->type() == SATBlockMod::eChgCost )
    return( eModObjective );
  return( eModEverything );
+ }
+
+/*--------------------------------------------------------------------------*/
+/*----------------------- METHODS OF SATResidualGraph ----------------------*/
+/*--------------------------------------------------------------------------*/
+
+bool SATResidualGraph::build( const SATSolver & solver , int features )
+{
+ n_col = n_features( features );
+ n_var = n_clause = 0;
+ vertex.clear();
+ source.clear();
+ target.clear();
+ edge.clear();
+ var.clear();
+
+ const auto & sat = *solver.get_SATBlock();
+ const auto & x = sat.get_variables();
+ const auto & clauses = sat.get_clauses();
+
+ // the unfixed variables, numbered from 0 in their order
+ std::vector< long > vtx( x.size() , -1 );
+ for( unsigned int i = 0 ; i < x.size() ; ++i )
+  if( ! x[ i ].is_fixed() ) {
+   vtx[ i ] = long( var.size() );
+   var.push_back( i );
+   }
+ n_var = long( var.size() );
+ if( n_var == 0 )
+  return( false );
+
+ // the clauses no fixed variable satisfies, with their literals on the
+ // unfixed ones, the others being false
+ std::vector< unsigned int > kept_clause;
+ std::vector< int > kept;
+ for( unsigned int i = 0 ; i < clauses.size() ; ++i ) {
+  kept.clear();
+  bool satisfied = false;
+  for( auto lit : clauses[ i ] ) {
+   const auto & xi = x[ std::abs( lit ) - 1 ];
+   if( ! xi.is_fixed() )
+    kept.push_back( lit );
+   else
+    if( ( xi.get_value() > 0.5 ) == ( lit > 0 ) ) {
+     satisfied = true;
+     break;
+     }
+   }
+  if( satisfied || kept.empty() )
+   continue;
+  const long c = n_var + long( kept_clause.size() );
+  kept_clause.push_back( i );
+  for( auto lit : kept ) {
+   const long v = vtx[ std::abs( lit ) - 1 ];
+   source.push_back( v ); target.push_back( c );
+   source.push_back( c ); target.push_back( v );
+   for( int twice = 0 ; twice < 2 ; ++twice ) {
+    edge.push_back( lit > 0 ? 0 : 1 );
+    edge.push_back( lit > 0 ? 1 : 0 );
+    }
+   }
+  }
+ n_clause = long( kept_clause.size() );
+ if( n_clause == 0 ) {
+  n_var = 0;
+  var.clear();
+  return( false );
+  }
+
+ vertex.assign( std::size_t( n_var + n_clause ) * n_col , 0 );
+ for( long v = 0 ; v < n_var ; ++v )
+  vertex[ v * n_col ] = 1;
+ for( long c = n_var ; c < n_var + n_clause ; ++c )
+  vertex[ c * n_col + 1 ] = 1;
+ if( features != eMaxSAT )
+  return( true );
+
+ // what a weighted MaxSAT node has: the largest weight, the best solution,
+ // the scores of the cores and the costs
+ const auto & w = sat.get_weights();
+ double wmax = 0;
+ for( unsigned int i = 0 ; i < clauses.size() ; ++i )
+  if( ! sat.is_hard( i ) )
+   wmax = std::max( wmax , w[ i ] );
+ if( wmax <= 0 )
+  wmax = 1;
+ const auto & best = solver.get_best_solution();
+ const auto score = solver.core_scores();
+ double smax = 0;
+ for( auto sc : score )
+  smax = std::max( smax , sc );
+ const auto & costs = sat.get_costs();
+ for( long v = 0 ; v < n_var ; ++v ) {
+  const auto i = var[ v ];
+  float * row = & vertex[ v * n_col ];
+  row[ 2 ] = best.empty() ? 0.5f : float( best[ i ] );
+  row[ 3 ] = smax > 0 ? float( score[ i ] / smax ) : 0.0f;
+  row[ 4 ] = i < costs.size() ? float( costs[ i ] / wmax ) : 0.0f;
+  }
+ for( long c = 0 ; c < n_clause ; ++c ) {
+  const auto i = kept_clause[ c ];
+  float * row = & vertex[ ( n_var + c ) * n_col ];
+  row[ 5 ] = sat.is_hard( i ) ? 1.0f : float( w[ i ] / wmax );
+  row[ 6 ] = sat.is_hard( i ) ? 1.0f : 0.0f;
+  }
+ return( true );
  }
 
 /*--------------------------------------------------------------------------*/

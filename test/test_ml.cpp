@@ -166,20 +166,23 @@ int main( void )
   b.load( in );
   b.generate_abstract_variables();
   auto & x = b.get_variables();
+  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name() ) );
+  b.register_Solver( s );
   std::unique_ptr< SATBranchRule > rule(
 				     SATBranchRule::make( "GQSAT-known" ) );
   unsigned int var = 99;
   double first = -1;
-  assert( rule->choose( b , var , first ) && ( var == 3 ) && ( first == 1 ) );
+  assert( rule->choose( *s , var , first ) && ( var == 3 ) && ( first == 1 ) );
   // x3 is in no clause, but it is an unfixed variable all the same; fixing
   // x0 to true satisfies both clauses, and nothing is left to say
   x[ 3 ].set_value( 0 ); x[ 3 ].is_fixed( true );
-  assert( rule->choose( b , var , first ) && ( var == 2 ) );
+  assert( rule->choose( *s , var , first ) && ( var == 2 ) );
   x[ 0 ].set_value( 1 ); x[ 0 ].is_fixed( true );
-  assert( ! rule->choose( b , var , first ) );
+  assert( ! rule->choose( *s , var , first ) );
   // no policy read: nothing to say
   GQSATBranchRule empty;
-  assert( ! empty.choose( b , var , first ) );
+  assert( ! empty.choose( *s , var , first ) );
+  b.unregister_Solvers( true );
   }
 
  // an unknown rule
