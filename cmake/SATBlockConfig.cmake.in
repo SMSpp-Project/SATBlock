@@ -34,6 +34,10 @@ endif ()
 if (SATBlock_USE_MINISAT)
     find_dependency(MiniSat)
 endif ()
+# SATBlockML, if it was built
+if (@Torch_FOUND@)
+    find_dependency(Torch HINTS @Torch_DIR@)
+endif ()
 
 list(REMOVE_AT CMAKE_MODULE_PATH -1)
 

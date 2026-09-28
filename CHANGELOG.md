@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the most assumptions of the cores found, the child with the value of the
   best solution first, so that a dive follows that solution; the fixings
   are assumptions, whose cores the nodes below reuse
+- `SATBranchRule`, a rule choosing the variable `SATSolver::branch()` fixes,
+  made by name out of a factory of its own, and the parameters
+  `strBranchRule` and `strBranchRuleFile` of `SATSolver`, which ask it
+  first, the rule of the cores deciding if it has nothing to say
+- `SATBlockML`, a library built only if Torch is found, with
+  `GQSATBranchRule` ("GQSAT"), which chooses by the Q-values of a policy
+  learned by Graph-Q-SAT (such as its variant with graph attention),
+  read as a TorchScript module, on the graph Graph-Q-SAT makes of the
+  residual formula of the node
 
 ### Changed
 

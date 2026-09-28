@@ -31,8 +31,11 @@ incremental, i.e., the cores it finds are used again, with the weights of
 the moment, by the following solves of a changed instance. A `SATSolver` is
 also a relaxation for the `BranchAndXSolver`, which enumerates on it by
 fixing variables (`SATBlockChange`), OLL running within a budget of calls of
-the SAT solver in each node. `CaDiCaLSATSolver` and `MiniSATSolver` are the
-ones for CaDiCaL and MiniSat, each built if its SAT solver is found.
+the SAT solver in each node; the variable it fixes is chosen by the cores,
+or by a `SATBranchRule` given by name, such as the one of `SATBlockML`, a
+library built if Torch is found, which reads a policy learned by Graph-Q-SAT.
+`CaDiCaLSATSolver` and `MiniSATSolver` are the ones for CaDiCaL and MiniSat,
+each built if its SAT solver is found.
 
 `smspp_satgen` generates random weighted partial MaxSAT instances made of
 groups of clauses bound by a tunable fraction of linking clauses, which is the

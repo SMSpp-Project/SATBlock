@@ -27,6 +27,9 @@
 /*--------------------------------------------------------------------------*/
 
 #include <chrono>
+#include <functional>
+#include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -163,7 +166,75 @@ namespace SMSpp_di_unipi_it
  * fixes the unfixed x that is in the most soft assumptions of the cores
  * found so far (a relaxation variable counting for the variables of its
  * clause, shared among them), making two children, the first with the value
- * x has in the best solution found, so that diving follows that solution. */
+ * x has in the best solution found, so that diving follows that solution.
+ * With strBranchRule, the SATBranchRule of that name is asked first, the
+ * rule of the cores deciding only if it has nothing to say [see
+ * SATBranchRule]. */
+
+/*--------------------------------------------------------------------------*/
+/*-------------------------- CLASS SATBranchRule ---------------------------*/
+/*--------------------------------------------------------------------------*/
+/// a rule choosing the variable SATSolver::branch() fixes
+/** A SATBranchRule chooses, among the unfixed ColVariable x of a SATBlock,
+ * the one that SATSolver::branch() fixes, and the value of the first child.
+ * The rules are made by name out of a factory of their own [see add() and
+ * make()], so that a library can add one without SATSolver knowing it, such
+ * as the learned rule of SATBlockML, which needs Torch. */
+
+class SATBranchRule
+{
+/*----------------------- PUBLIC PART OF THE CLASS -------------------------*/
+
+ public:
+
+/*------------------------------- DESTRUCTOR -------------------------------*/
+ /// destructor, does nothing
+
+ virtual ~SATBranchRule() = default;
+
+/*----------------------- PUBLIC METHODS OF THE CLASS ----------------------*/
+ /// reads what the rule needs, e.g., the file of a model; does nothing
+
+ virtual void load( const std::string & ) {}
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// chooses the unfixed x to branch on and the value of the first child
+ /** Sets \p var to the index of an unfixed ColVariable x of \p sat and
+  * \p first to the value (0 or 1) of the first child, returning true;
+  * returns false if the rule has nothing to say, the rule of SATSolver
+  * deciding then. */
+
+ virtual bool choose( const SATBlock & sat , unsigned int & var ,
+		      double & first ) = 0;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// adds a rule to the factory, under the given name; returns true
+
+ static bool add( const std::string & name ,
+		  std::function< SATBranchRule * ( void ) > maker );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// makes a new rule of the given name, nullptr if there is none
+
+ static SATBranchRule * make( const std::string & name );
+
+/*----------------------- PRIVATE PART OF THE CLASS ------------------------*/
+
+ private:
+
+/*--------------------------- PRIVATE METHODS ------------------------------*/
+ /// the factory: the maker of each rule, by name
+
+ static std::map< std::string , std::function< SATBranchRule * ( void ) > >
+ & rules( void );
+
+/*--------------------------------------------------------------------------*/
+
+ };  // end( class( SATBranchRule ) )
+
+/*--------------------------------------------------------------------------*/
+/*---------------------------- CLASS SATSolver -----------------------------*/
+/*--------------------------------------------------------------------------*/
 
 class SATSolver : public Solver , public RelaxationSolver
 {
@@ -254,6 +325,60 @@ class SATSolver : public Solver , public RelaxationSolver
  /// returns the name of the int parameter with the given index
 
  [[nodiscard]] const std::string & int_par_idx2str( idx_type idx )
+  const override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the string parameters of SATSolver, on top of those of Solver
+
+ enum str_par_type_SATS {
+  strBranchRule = strLastAlgPar ,  ///< the SATBranchRule of branch()
+                               /**< The name of the SATBranchRule [see
+				* SATBranchRule::make()] that branch() asks
+				* first; empty (the default) means the rule
+				* of the cores [see the class]. An unknown
+				* name throws. */
+  strBranchRuleFile ,          ///< the file the SATBranchRule reads
+                               /**< The file given to SATBranchRule::load(),
+				* e.g., the model of a learned rule; empty by
+				* default. */
+  strLastAlgParSATS            ///< first new string parameter of derived
+                               ///< classes
+  };
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// sets the string parameters, making and loading the SATBranchRule
+
+ void set_par( idx_type par , std::string && value ) override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the number of string parameters
+
+ [[nodiscard]] idx_type get_num_str_par( void ) const override {
+  return( idx_type( strLastAlgParSATS ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the default of the string parameters
+
+ [[nodiscard]] const std::string & get_dflt_str_par( idx_type par )
+  const override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the string parameters
+
+ [[nodiscard]] const std::string & get_str_par( idx_type par )
+  const override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the index of the string parameter with the given name
+
+ [[nodiscard]] idx_type str_par_str2idx( const std::string & name )
+  const override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the name of the string parameter with the given index
+
+ [[nodiscard]] const std::string & str_par_idx2str( idx_type idx )
   const override;
 
 /*--------------------- METHODS FOR SOLVING THE MODEL ----------------------*/
@@ -489,6 +614,12 @@ class SATSolver : public Solver , public RelaxationSolver
  int CoreMinBudget = 1000;     ///< the parameter intMaxSATMinBudget
 
  int MaxIter = Inf< int >();   ///< the parameter intMaxIter
+
+ std::string BranchRule;       ///< the parameter strBranchRule
+
+ std::string BranchRuleFile;   ///< the parameter strBranchRuleFile
+
+ std::unique_ptr< SATBranchRule > f_rule;  ///< the rule of strBranchRule
 
  bool f_iter_stop = false;     ///< if OLL has stopped for intMaxIter
 

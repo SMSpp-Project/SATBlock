@@ -67,4 +67,16 @@ add_test(NAME ${modName}_unit_test
 # umbrella for the system-tests counterpart).
 set_tests_properties(${modName}_unit_test PROPERTIES LABELS "${modName}")
 
+# SATBlockML, if it is built: the learned SATBranchRule
+if (TARGET ${modNamespace}::${modName}ML)
+    add_executable(${modName}ML_unit_test test_ml.cpp)
+    target_link_libraries(${modName}ML_unit_test PRIVATE
+                          ${modNamespace}::${modName}ML)
+    add_test(NAME ${modName}ML_unit_test
+             COMMAND ${modName}ML_unit_test
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(${modName}ML_unit_test PROPERTIES
+                         LABELS "${modName}" SKIP_RETURN_CODE 77)
+endif ()
+
 # --------------------------------------------------------------------------- #

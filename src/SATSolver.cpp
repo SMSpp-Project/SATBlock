@@ -133,6 +133,77 @@ void SATSolver::set_par( idx_type par , double value )
   Solver::set_par( par , value );
  }
 
+void SATSolver::set_par( idx_type par , std::string && value )
+{
+ switch( par ) {
+  case( strBranchRule ):
+   if( value.empty() )
+    f_rule.reset();
+   else {
+    std::unique_ptr< SATBranchRule > rule( SATBranchRule::make( value ) );
+    if( ! rule )
+     throw( std::invalid_argument( "SATSolver::set_par: no SATBranchRule "
+				   "named " + value + " (is the library "
+				   "that has it linked?)" ) );
+    if( ! BranchRuleFile.empty() )
+     rule->load( BranchRuleFile );
+    f_rule = std::move( rule );
+    }
+   BranchRule = std::move( value );
+   break;
+  case( strBranchRuleFile ):
+   BranchRuleFile = value;
+   if( f_rule && ( ! value.empty() ) )
+    f_rule->load( value );
+   break;
+  default:
+   Solver::set_par( par , std::move( value ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+const std::string & SATSolver::get_dflt_str_par( idx_type par ) const
+{
+ static const std::string empty;
+ if( ( par == strBranchRule ) || ( par == strBranchRuleFile ) )
+  return( empty );
+ return( Solver::get_dflt_str_par( par ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+const std::string & SATSolver::get_str_par( idx_type par ) const
+{
+ switch( par ) {
+  case( strBranchRule ):     return( BranchRule );
+  case( strBranchRuleFile ): return( BranchRuleFile );
+  default:                   return( Solver::get_str_par( par ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+Solver::idx_type SATSolver::str_par_str2idx( const std::string & name ) const
+{
+ if( name == "strBranchRule" )
+  return( strBranchRule );
+ if( name == "strBranchRuleFile" )
+  return( strBranchRuleFile );
+ return( Solver::str_par_str2idx( name ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+const std::string & SATSolver::str_par_idx2str( idx_type idx ) const
+{
+ static const std::array< std::string , 2 > names = { "strBranchRule" ,
+						       "strBranchRuleFile" };
+ if( ( idx >= strBranchRule ) && ( idx < strLastAlgParSATS ) )
+  return( names[ idx - strBranchRule ] );
+ return( Solver::str_par_idx2str( idx ) );
+ }
+
 /*--------------------------------------------------------------------------*/
 /*--------------------- METHODS FOR SOLVING THE MODEL ----------------------*/
 /*--------------------------------------------------------------------------*/
@@ -740,6 +811,27 @@ std::vector< Change * > SATSolver::branch( void )
  const auto n = x.size();
  const auto & clauses = f_sat->get_clauses();
 
+ auto children = []( unsigned int var , double first ) {
+  return( std::vector< Change * >{
+	   new SATBlockChange( SATBlockChange::eFixX , Block::Subset{ var } ,
+			       std::vector< double >{ first } ) ,
+	   new SATBlockChange( SATBlockChange::eFixX , Block::Subset{ var } ,
+			       std::vector< double >{ 1 - first } ) } );
+  };
+
+ // the rule of strBranchRule first, if any and if it has something to say
+ if( f_rule ) {
+  unsigned int var = 0;
+  double first = 0;
+  if( f_rule->choose( *f_sat , var , first ) ) {
+   if( ( var >= n ) || x[ var ].is_fixed() )
+    throw( std::logic_error( "SATSolver::branch: the SATBranchRule " +
+			     BranchRule + " chose the fixed or unknown "
+			     "variable " + std::to_string( var ) ) );
+   return( children( var , first > 0.5 ? 1 : 0 ) );
+   }
+  }
+
  // the clause of each relaxation variable
  std::unordered_map< int , unsigned int > relax_clause;
  for( unsigned int i = 0 ; i < v_soft.size() ; ++i )
@@ -776,11 +868,7 @@ std::vector< Change * > SATSolver::branch( void )
 
  // the value of the best solution first
  const double first = ( ( best < v_model.size() ) && v_model[ best ] ) ? 1 : 0;
- return( std::vector< Change * >{
-	   new SATBlockChange( SATBlockChange::eFixX , Block::Subset{ best } ,
-			       std::vector< double >{ first } ) ,
-	   new SATBlockChange( SATBlockChange::eFixX , Block::Subset{ best } ,
-			       std::vector< double >{ 1 - first } ) } );
+ return( children( best , first ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -791,6 +879,35 @@ int SATSolver::classify( const sp_Mod & mod )
   if( smod->type() == SATBlockMod::eChgCost )
    return( eModObjective );
  return( eModEverything );
+ }
+
+/*--------------------------------------------------------------------------*/
+/*------------------------ METHODS OF SATBranchRule ------------------------*/
+/*--------------------------------------------------------------------------*/
+
+std::map< std::string , std::function< SATBranchRule * ( void ) > > &
+SATBranchRule::rules( void )
+{
+ static std::map< std::string , std::function< SATBranchRule * ( void ) > >
+  makers;
+ return( makers );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+bool SATBranchRule::add( const std::string & name ,
+			 std::function< SATBranchRule * ( void ) > maker )
+{
+ rules()[ name ] = std::move( maker );
+ return( true );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+SATBranchRule * SATBranchRule::make( const std::string & name )
+{
+ const auto it = rules().find( name );
+ return( it == rules().end() ? nullptr : it->second() );
  }
 
 /*--------------------------------------------------------------------------*/
