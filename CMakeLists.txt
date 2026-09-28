@@ -45,6 +45,10 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # See: https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html
 include(BuildType)
 
+# An option is an ON/OFF user-settable cache variable
+option(SATBlock_USE_CADICAL "Whether SATBlock will use CaDiCaL or not." ON)
+option(SATBlock_USE_MINISAT "Whether SATBlock will use MiniSat or not." ON)
+
 # ----- Requirements -------------------------------------------------------- #
 # If it's not being called by the umbrella, we need to
 # look for the system-installed libraries.
@@ -119,42 +123,38 @@ target_sources(${modName} PRIVATE
 # ----- SAT solvers --------------------------------------------------------- #
 # SATSolver, the base of the Solver of a SATBlock, needs nothing; each of the
 # classes derived from it wraps a SAT solver, and is built if that SAT solver
-# is found: CaDiCaL (CADICAL_ROOT, holding src/cadical.hpp and
-# build/libcadical.a as its build leaves them, or an installed one) for
-# CaDiCaLSATSolver, and MiniSat (MINISAT_ROOT, an installed one) for
-# MiniSATSolver.
+# is found [see cmake/FindCaDiCaL.cmake and cmake/FindMiniSat.cmake]:
+# CaDiCaL (CADICAL_ROOT) for CaDiCaLSATSolver, and MiniSat (MINISAT_ROOT)
+# for MiniSATSolver. Their headers are included by the sources only, hence
+# the SAT solvers are linked PRIVATE.
 target_sources(${modName} PRIVATE src/SATSolver.cpp)
 
-find_path(CADICAL_INCLUDE_DIR cadical.hpp
-          HINTS ${CADICAL_ROOT} ENV CADICAL_ROOT
-          PATH_SUFFIXES src include)
-find_library(CADICAL_LIBRARY NAMES cadical
-             HINTS ${CADICAL_ROOT} ENV CADICAL_ROOT
-             PATH_SUFFIXES build lib)
-if (CADICAL_INCLUDE_DIR AND CADICAL_LIBRARY)
+if (SATBlock_USE_CADICAL)
+    find_package(CaDiCaL)
+    if (NOT CaDiCaL_FOUND)
+        set(SATBlock_USE_CADICAL OFF)
+    endif ()
+endif ()
+if (SATBlock_USE_CADICAL)
     message(STATUS "CaDiCaLSATSolver: CaDiCaL from ${CADICAL_LIBRARY}")
     target_sources(${modName} PRIVATE src/CaDiCaLSATSolver.cpp)
-    target_include_directories(${modName} SYSTEM PRIVATE
-            ${CADICAL_INCLUDE_DIR})
-    target_link_libraries(${modName} PRIVATE ${CADICAL_LIBRARY})
-    set(SATBlock_HAS_CaDiCaL ON)
+    target_link_libraries(${modName} PRIVATE CaDiCaL::CaDiCaL)
 else ()
     message(STATUS "CaDiCaLSATSolver: CaDiCaL not found, not built")
-    set(SATBlock_HAS_CaDiCaL OFF)
 endif ()
 
-find_path(MINISAT_INCLUDE_DIR minisat/core/Solver.h
-          HINTS ${MINISAT_ROOT} ENV MINISAT_ROOT
-          PATH_SUFFIXES include)
-find_library(MINISAT_LIBRARY NAMES minisat
-             HINTS ${MINISAT_ROOT} ENV MINISAT_ROOT
-             PATH_SUFFIXES lib)
-if (MINISAT_INCLUDE_DIR AND MINISAT_LIBRARY)
+if (SATBlock_USE_MINISAT)
+    find_package(MiniSat)
+    if (NOT MiniSat_FOUND)
+        set(SATBlock_USE_MINISAT OFF)
+    endif ()
+endif ()
+if (SATBlock_USE_MINISAT)
     message(STATUS "MiniSATSolver: MiniSat from ${MINISAT_LIBRARY}")
     target_sources(${modName} PRIVATE src/MiniSATSolver.cpp)
 
     # ----- Compatibility shim for an unpatched MiniSat --------------------- #
-    # The packaged MiniSat (2.2, and its last upstream commit) declares in
+    # The upstream MiniSat (2.2, and its last commit) declares in
     # minisat/core/SolverTypes.h
     #     friend Lit mkLit(Var var, bool sign = false);
     # a friend declaration with a default argument that is not a definition,
@@ -182,13 +182,9 @@ if (MINISAT_INCLUDE_DIR AND MINISAT_LIBRARY)
     target_include_directories(${modName} SYSTEM BEFORE PRIVATE
             ${MINISAT_SHIM_DIR})
 
-    target_include_directories(${modName} SYSTEM PRIVATE
-            ${MINISAT_INCLUDE_DIR})
-    target_link_libraries(${modName} PRIVATE ${MINISAT_LIBRARY})
-    set(SATBlock_HAS_MiniSat ON)
+    target_link_libraries(${modName} PRIVATE MiniSat::MiniSat)
 else ()
     message(STATUS "MiniSATSolver: MiniSat not found, not built")
-    set(SATBlock_HAS_MiniSat OFF)
 endif ()
 
 # When using target_include_directories(), PUBLIC means that any targets
@@ -346,6 +342,13 @@ configure_package_config_file(
 install(FILES
         ${CMAKE_CURRENT_BINARY_DIR}/${modName}Config.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/${modName}ConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${modName})
+
+# The find modules of the SAT solvers, which install no CMake configuration
+# file of their own, go with the configuration file that uses them.
+install(FILES
+        ${CMAKE_CURRENT_LIST_DIR}/cmake/FindCaDiCaL.cmake
+        ${CMAKE_CURRENT_LIST_DIR}/cmake/FindMiniSat.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${modName})
 
 # Install the README and LICENSE files.

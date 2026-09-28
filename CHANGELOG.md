@@ -70,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such as the one a `LagBFunction` makes, is brought into the costs and the
   weights by `add_Modification()`. OLL makes of each cost a unit soft
   clause, and the bounds of `SATSolver` count the costs
+- the SAT solvers are found by `cmake/FindCaDiCaL.cmake` and
+  `cmake/FindMiniSat.cmake`, which define imported targets and are installed
+  with the package configuration, and chosen by the options
+  `SATBlock_USE_CADICAL` and `SATBlock_USE_MINISAT`; the configuration of an
+  installed SATBlock finds again the SAT solvers it was built with, and the
+  makefile builds `SATSolver` and, through `extlib`, the wrapper of each SAT
+  solver that is there, with the same shim of MiniSat
 - `smspp_satgen`, the generator of random weighted partial MaxSAT instances
   made of groups of variables with their own hard and soft clauses, bound by
   a tunable fraction of hard linking clauses, possibly with a planted

@@ -37,11 +37,11 @@ add_executable(${modName}_unit_test test.cpp)
 # the module]
 add_dependencies(${modName}_unit_test fetch_sat_data)
 target_link_libraries(${modName}_unit_test PRIVATE ${modNamespace}::${modName})
-if (SATBlock_HAS_CaDiCaL)
+if (SATBlock_USE_CADICAL)
     target_compile_definitions(${modName}_unit_test PRIVATE
                                SATBLOCK_HAS_CADICAL)
 endif ()
-if (SATBlock_HAS_MiniSat)
+if (SATBlock_USE_MINISAT)
     target_compile_definitions(${modName}_unit_test PRIVATE
                                SATBLOCK_HAS_MINISAT)
 endif ()

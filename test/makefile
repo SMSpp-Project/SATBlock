@@ -20,7 +20,7 @@ DIR = .
 CC = clang++
 
 # common flags
-COMMON_SW = -std=c++17 -ferror-limit=1 -Wno-enum-compare -DCLANG_1200_0_32_27_PATCH
+COMMON_SW = -std=c++20 -ferror-limit=1 -Wno-enum-compare
 
 # debug switches
 SW_DEBUG = -g3 -glldb -fno-inline $(COMMON_SW)
@@ -46,6 +46,14 @@ include $(SMS++SDR)/lib/makefile-inc
 SATBkSDR = ..
 include $(SATBkSDR)/makefile-s
 
+# the tests of a SAT solver are compiled only if it is there
+ifneq ($(SATBkCADICAL),)
+TDEF += -DSATBLOCK_HAS_CADICAL
+endif
+ifneq ($(SATBkMINISAT),)
+TDEF += -DSATBLOCK_HAS_MINISAT
+endif
+
 # main module (linking phase) - - - - - - - - - - - - - - - - - - - - - - - -
 
 # object files
@@ -67,7 +75,7 @@ MH =    $(SMS++H) $(SATBkH)
 
 # compile command
 $(DIR)/test.o: $(DIR)/test.cpp $(MH)
-	$(CC) -c $(DIR)/test.cpp -o $@ $(MINC) $(SW)
+	$(CC) -c $(DIR)/test.cpp -o $@ $(MINC) $(TDEF) $(SW)
 
 # clean target
 clean::

@@ -48,6 +48,6 @@ SATBkOBJ := $(SATBkOBJ) $(SMS++OBJ)
 SATBkINC := $(SATBkINC) $(SMS++INC)
 
 # external libraries for SATBlock
-SATBkLIB = $(SMS++LIB)
+SATBkLIB := $(SATBkLIB) $(SMS++LIB)
 
 ############################ End of makefile #################################

@@ -16,8 +16,26 @@
 get_filename_component(@modName@_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
 include(CMakeFindDependencyMacro)
 
+# ----- Settings ------------------------------------------------------------ #
+set(SATBlock_USE_CADICAL @SATBlock_USE_CADICAL@)
+set(SATBlock_USE_MINISAT @SATBlock_USE_MINISAT@)
+
 # ----- Requirements -------------------------------------------------------- #
 find_dependency(SMS++)
+
+# This is needed to find the custom modules we provide; a static SATBlock
+# needs the SAT solvers it was built with in the link of whoever uses it
+list(APPEND CMAKE_MODULE_PATH ${@modName@_CMAKE_DIR})
+
+if (SATBlock_USE_CADICAL)
+    find_dependency(CaDiCaL)
+endif ()
+
+if (SATBlock_USE_MINISAT)
+    find_dependency(MiniSat)
+endif ()
+
+list(REMOVE_AT CMAKE_MODULE_PATH -1)
 
 # ----- Import target ------------------------------------------------------- #
 if (NOT TARGET @modNamespace@::@modName@)
