@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OLL is incremental: the relaxation variables, the totalizers and the cores
+  it finds stay with the SAT solver, with the clauses it has learnt, and at
+  the beginning of each `compute()` the cores are relaxed again with the
+  weights and the costs of now, since a core depends on the hard clauses
+  and on the fixed variables in its reason but not on the weights; a
+  sequence of close instances, such as the subproblems of a Lagrangian
+  decomposition, calls the SAT solver only for what those cores do not say
+
 ### Changed
+
+- a clause turned from soft to hard is given to the SAT solver on top of
+  those it has, and only one turned from hard to soft makes the clauses be
+  given again from scratch
 
 ### Fixed
 

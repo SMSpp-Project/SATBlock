@@ -140,9 +140,9 @@ void SATSolver::process_outstanding_Modification( void )
  const Function * objf = obj ? obj->get_function() : nullptr;
 
  // fixing or unfixing a Variable is taken care of by the assumptions, the
- // clauses added by add_new_clauses(), and so are the weights changed as
- // long as the hard clauses stay the same, which the Objective only follows;
- // any other Modification means the clauses are given again
+ // clauses added and those turned hard by sync_clauses(), which also finds
+ // those turned soft, and the weights and the costs are read anew by each
+ // compute(); any other Modification means the clauses are given again
  while( auto mod = pop() ) {
   if( std::dynamic_pointer_cast< const VariableMod >( mod ) ||
       std::dynamic_pointer_cast< const ObjectiveMod >( mod ) ||
@@ -158,20 +158,38 @@ void SATSolver::process_outstanding_Modification( void )
     continue;
   if( auto smod = std::dynamic_pointer_cast< const SATBlockMod >( mod ) ) {
    if( ( smod->type() == SATBlockMod::eAddClauses ) ||
-       ( smod->type() == SATBlockMod::eChgCost ) )
+       ( smod->type() == SATBlockMod::eChgCost ) ||
+       ( smod->type() == SATBlockMod::eChgWeight ) )
     continue;
-   if( smod->type() == SATBlockMod::eChgWeight ) {
-    // the clauses the SAT solver has (v_hard) against those hard now
-    for( unsigned int i = 0 ; i < v_hard.size() ; ++i )
-     if( bool( v_hard[ i ] ) != f_sat->is_hard( i ) ) {
-      f_reload = true;
-      break;
-      }
-    continue;
-    }
    }
   f_reload = true;
   }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+std::vector< unsigned char > SATSolver::hard_clauses( void ) const
+{
+ // the hard clauses of the physical representation, but those whose row is
+ // relaxed, if the abstract representation is there; a tautology is
+ // harmless
+ const auto & sat = std::as_const( *f_sat );
+ std::vector< unsigned char > hard( sat.get_clauses().size() , 0 );
+ for( unsigned int i = 0 ; i < hard.size() ; ++i )
+  if( sat.is_hard( i ) )
+   hard[ i ] = 1;
+ unsigned int i = 0;
+ for( const auto & c : sat.get_clause_constraints() )
+  if( ( i < hard.size() ) && c.is_relaxed() )
+   hard[ i++ ] = 0;
+  else
+   ++i;
+ for( const auto & c : sat.get_added_clause_constraints() )
+  if( ( i < hard.size() ) && c.is_relaxed() )
+   hard[ i++ ] = 0;
+  else
+   ++i;
+ return( hard );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -181,45 +199,43 @@ void SATSolver::load_clauses( void )
  sat_new();
  f_has_sat = true;
 
- // the hard clauses of the physical representation, but those whose row is
- // relaxed, if the abstract representation is there; a tautology is
- // harmless
- const auto & sat = std::as_const( *f_sat );
- const auto & clauses = sat.get_clauses();
- v_hard.assign( clauses.size() , 0 );
+ v_hard = hard_clauses();
+ const auto & clauses = f_sat->get_clauses();
  for( unsigned int i = 0 ; i < clauses.size() ; ++i )
-  if( sat.is_hard( i ) )
-   v_hard[ i ] = 1;
- unsigned int i = 0;
- for( const auto & c : sat.get_clause_constraints() )
-  if( c.is_relaxed() && ( i < v_hard.size() ) )
-   v_hard[ i++ ] = 0;
-  else
-   ++i;
- for( const auto & c : sat.get_added_clause_constraints() )
-  if( c.is_relaxed() && ( i < v_hard.size() ) )
-   v_hard[ i++ ] = 0;
-  else
-   ++i;
-
- for( i = 0 ; i < clauses.size() ; ++i )
   if( v_hard[ i ] )
    sat_clause( clauses[ i ] );
+
+ // what OLL has made goes with the SAT solver it was made in
+ v_soft.clear();
+ v_tot.clear();
+ v_cores.clear();
+ f_next_var = int( f_sat->get_number_variables() );
 
  f_reload = false;
  }
 
 /*--------------------------------------------------------------------------*/
 
-void SATSolver::add_new_clauses( void )
+void SATSolver::sync_clauses( void )
 {
- const auto & clauses = f_sat->get_clauses();
- for( auto i = v_hard.size() ; i < clauses.size() ; ++i ) {
-  const bool hard = f_sat->is_hard( i );
-  if( hard )
-   sat_clause( clauses[ i ] );
-  v_hard.push_back( hard ? 1 : 0 );
+ const auto hard = hard_clauses();
+
+ // a clause cannot be taken away from the SAT solver
+ if( hard.size() < v_hard.size() ) {
+  load_clauses();
+  return;
   }
+ for( unsigned int i = 0 ; i < v_hard.size() ; ++i )
+  if( v_hard[ i ] && ( ! hard[ i ] ) ) {
+   load_clauses();
+   return;
+   }
+
+ const auto & clauses = f_sat->get_clauses();
+ for( unsigned int i = 0 ; i < hard.size() ; ++i )
+  if( hard[ i ] && ( ( i >= v_hard.size() ) || ( ! v_hard[ i ] ) ) )
+   sat_clause( clauses[ i ] );
+ v_hard = hard;
  }
 
 /*--------------------------------------------------------------------------*/
@@ -242,14 +258,11 @@ int SATSolver::compute( bool changedvars )
 
  f_start = std::chrono::steady_clock::now();
 
- // OLL gives the clauses anew by itself
  process_outstanding_Modification();
- if( MaxSATAlg != 1 ) {
-  if( f_reload || ( ! f_has_sat ) )
-   load_clauses();
-  else
-   add_new_clauses();
-  }
+ if( f_reload || ( ! f_has_sat ) )
+  load_clauses();
+ else
+  sync_clauses();
 
  // the fixed ColVariable x, if they exist, are assumptions
  const auto & x = std::as_const( *f_sat ).get_variables();
@@ -376,10 +389,17 @@ void SATSolver::tot_extend( int node , std::size_t k )
 /*--------------------------------------------------------------------------*/
 
 void SATSolver::reduce_core( const std::vector< int > & fixed ,
-			     std::vector< int > & core )
+			     std::vector< int > & core ,
+			     std::vector< int > & cond )
 {
  std::vector< int > as;
  std::vector< int > smaller;
+ // the fixed variables in the reason of the last answer
+ auto add_cond = [ & ]( void ) {
+  for( auto lit : fixed )
+   if( sat_failed( lit ) )
+    cond.push_back( lit );
+  };
 
  // trimming: the core alone, until it stops shrinking
  for( int t = 0 ; ( t < CoreTrim ) && ( core.size() > 1 ) ; ++t ) {
@@ -387,6 +407,7 @@ void SATSolver::reduce_core( const std::vector< int > & fixed ,
   as.insert( as.end() , core.begin() , core.end() );
   if( sat_solve( as ) != 20 )  // the time is up
    return;
+  add_cond();
   smaller.clear();
   for( auto lit : core )
    if( sat_failed( lit ) )
@@ -406,8 +427,10 @@ void SATSolver::reduce_core( const std::vector< int > & fixed ,
   for( std::size_t j = 0 ; j < core.size() ; ++j )
    if( j != i )
     as.push_back( core[ j ] );
-  if( sat_solve( as , CoreMinBudget ) == 20 )
+  if( sat_solve( as , CoreMinBudget ) == 20 ) {
+   add_cond();
    core.erase( core.begin() + i );  // the rest is a core
+   }
   else
    ++i;
   }
@@ -417,12 +440,6 @@ void SATSolver::reduce_core( const std::vector< int > & fixed ,
 
 int SATSolver::oll( const std::vector< int > & fixed )
 {
- // the SAT solver anew with the hard clauses, the soft ones added below
- load_clauses();
- f_reload = true;  // what OLL adds does not last beyond this compute()
- v_tot.clear();
- f_next_var = int( f_sat->get_number_variables() );
-
  // an assumption for the soft clauses: its weight, and the totalizer and
  // the bound it says "at most" of, if any
  struct Soft {
@@ -442,24 +459,32 @@ int SATSolver::oll( const std::vector< int > & fixed )
    it->second.w += w;
   };
 
+ // the soft clauses with the weights of now, the literal of each being made
+ // once for all the compute() of the same SAT solver
  f_lb = 0;
  const auto & clauses = f_sat->get_clauses();
  const auto & weights = f_sat->get_weights();
+ if( v_soft.size() < clauses.size() )
+  v_soft.resize( clauses.size() , 0 );
  for( unsigned int i = 0 ; i < clauses.size() ; ++i ) {
   if( f_sat->is_hard( i ) || ( weights[ i ] == 0 ) ||
       f_sat->is_tautology( i ) )
    continue;
-  if( clauses[ i ].empty() )  // violated whatever
+  if( clauses[ i ].empty() ) {  // violated whatever
    f_lb += weights[ i ];
-  else
+   continue;
+   }
+  if( ! v_soft[ i ] ) {
    if( clauses[ i ].size() == 1 )
-    add_soft( clauses[ i ][ 0 ] , weights[ i ] , -1 , 0 );
+    v_soft[ i ] = clauses[ i ][ 0 ];
    else {
     auto clause = clauses[ i ];
     clause.push_back( ++f_next_var );
     sat_clause( clause );
-    add_soft( - f_next_var , weights[ i ] , -1 , 0 );
+    v_soft[ i ] = - f_next_var;
     }
+   }
+  add_soft( v_soft[ i ] , weights[ i ] , -1 , 0 );
   }
 
  // the costs of the variables: c_i > 0 is the unit soft clause "not x_i" of
@@ -474,6 +499,51 @@ int SATSolver::oll( const std::vector< int > & fixed )
     add_soft( int( i + 1 ) , - costs[ i ] , -1 , 0 );
     f_lb += costs[ i ];
     }
+
+ // a core: its assumptions have their weight lowered by the smallest one
+ // among them, which goes to the lower bound and to the assumption "at most
+ // one of them is violated" of the totalizer root, if any; an assumption
+ // "at most k" among them makes "at most k + 1" with that weight
+ auto relax = [ & ]( const std::vector< int > & core , int root ) {
+  double wmin = Inf< double >();
+  for( auto lit : core ) {
+   const auto it = soft.find( lit );
+   wmin = std::min( wmin , it == soft.end() ? 0.0 : it->second.w );
+   }
+  if( ! ( wmin > 0 ) )
+   return;
+  f_lb += wmin;
+  for( auto lit : core ) {
+   auto & sl = soft[ lit ];
+   sl.w -= wmin;
+   if( sl.root >= 0 ) {
+    const auto troot = sl.root;
+    const auto bnd = sl.bound + 1;
+    if( bnd < v_tot[ troot ].size ) {
+     tot_extend( troot , bnd + 1 );
+     add_soft( - v_tot[ troot ].out[ bnd ] , wmin , troot , bnd );
+     }
+    }
+   }
+  if( root >= 0 ) {
+   tot_extend( root , 2 );
+   add_soft( - v_tot[ root ].out[ 1 ] , wmin , root , 1 );
+   }
+  };
+
+ // the cores of the previous compute() with the same SAT solver: a core
+ // depends on the hard clauses, which have only grown since, and on the
+ // fixed variables in its reason, but not on the weights, so each of those
+ // whose fixed variables are still fixed so is relaxed again, in the same
+ // order, with the weights of now
+ {
+  std::vector< int > sfixed( fixed );
+  std::sort( sfixed.begin() , sfixed.end() );
+  for( const auto & core : v_cores )
+   if( std::includes( sfixed.begin() , sfixed.end() ,
+		      core.cond.begin() , core.cond.end() ) )
+    relax( core.lits , core.root );
+  }
 
  // the stratification: the assumptions weighing at least tau are given to
  // the SAT solver; lower_level() lowers tau to take the next weights, until
@@ -524,6 +594,7 @@ int SATSolver::oll( const std::vector< int > & fixed )
 
  std::vector< int > as;
  std::vector< int > core;
+ std::vector< int > cond;
  for( ; ; ) {
   as = fixed;
   for( auto lit : order )
@@ -547,56 +618,48 @@ int SATSolver::oll( const std::vector< int > & fixed )
   if( res != 20 )
    return( res );
 
-  // the core: the soft assumptions in the reason
+  // the core: the soft assumptions in the reason, and the fixed variables
+  // in it, which it holds under
   core.clear();
   for( auto it = as.begin() + fixed.size() ; it != as.end() ; ++it )
    if( sat_failed( *it ) )
     core.push_back( *it );
+  cond.clear();
+  for( auto lit : fixed )
+   if( sat_failed( lit ) )
+    cond.push_back( lit );
 
   if( core.empty() ) {
-   // the hard clauses and the fixed variables are unsatisfiable: the reason
-   // is asked again without the clauses OLL has added, which may be in it
+   // the hard clauses and the fixed variables are unsatisfiable, the
+   // clauses OLL adds being implied by the hard ones or only defining new
+   // variables
    f_lb = Inf< double >();
-   load_clauses();
-   const int hres = sat_solve( fixed );
-   if( hres == 20 )
-    for( auto lit : fixed )
-     v_failed[ std::abs( lit ) - 1 ] = sat_failed( lit ) ? 1 : 0;
-   return( hres );
+   for( auto lit : fixed )
+    v_failed[ std::abs( lit ) - 1 ] = sat_failed( lit ) ? 1 : 0;
+   return( 20 );
    }
 
-  reduce_core( fixed , core );
+  reduce_core( fixed , core , cond );
+  std::sort( cond.begin() , cond.end() );
+  cond.erase( std::unique( cond.begin() , cond.end() ) , cond.end() );
 
-  double wmin = Inf< double >();
-  for( auto lit : core )
-   wmin = std::min( wmin , soft[ lit ].w );
-  f_lb += wmin;
-
-  std::vector< int > viol;  // the literals true if an assumption is not
-  viol.reserve( core.size() );
-  for( auto lit : core ) {
-   auto & sl = soft[ lit ];
-   sl.w -= wmin;
-   viol.push_back( - lit );
-   if( sl.root >= 0 ) {
-    // "at most bound" is not, "at most bound + 1" takes the weight
-    const auto root = sl.root;
-    const auto bnd = sl.bound + 1;
-    if( bnd < v_tot[ root ].size ) {
-     tot_extend( root , bnd + 1 );
-     add_soft( - v_tot[ root ].out[ bnd ] , wmin , root , bnd );
-     }
-    }
+  // "at most one of the core is violated", or the only assumption of the
+  // core never holds, which the hard clauses imply if no fixed variable is
+  // in the reason
+  int root = -1;
+  if( core.size() > 1 ) {
+   std::vector< int > viol;  // the literals true if an assumption is not
+   viol.reserve( core.size() );
+   for( auto lit : core )
+    viol.push_back( - lit );
+   root = tot_build( viol , 0 , viol.size() );
    }
+  else
+   if( cond.empty() )
+    sat_clause( { - core[ 0 ] } );
 
-  if( core.size() == 1 )  // that assumption never holds
-   sat_clause( { - core[ 0 ] } );
-  else {
-   // "at most one of the core is violated"
-   const int root = tot_build( viol , 0 , viol.size() );
-   tot_extend( root , 2 );
-   add_soft( - v_tot[ root ].out[ 1 ] , wmin , root , 1 );
-   }
+  v_cores.push_back( { core , cond , root } );
+  relax( core , root );
   }
  }
 

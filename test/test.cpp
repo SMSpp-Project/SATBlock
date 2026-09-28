@@ -822,6 +822,128 @@ static void test_oll( void )
  }
 
 /*--------------------------------------------------------------------------*/
+/// the same OLL through a sequence of Modification, against the enumeration
+
+static void test_oll_incremental( void )
+{
+ const auto inf = Inf< double >();
+
+ std::srand( 54321 );
+ unsigned steps = 0 , infeasible = 0;
+ for( unsigned t = 0 ; t < 60 ; ++t ) {
+  const unsigned n = 4 + std::rand() % 7;          // 4 to 10 variables
+  auto rnd_clause = [ n ]( void ) {
+   SATBlock::Clause cl;
+   const unsigned len = 1 + std::rand() % 3;
+   for( unsigned l = 0 ; l < len ; ++l )
+    cl.push_back( int( 1 + std::rand() % n ) * ( std::rand() % 2 ? 1 : -1 ) );
+   return( cl );
+   };
+  auto rnd_weight = [ inf ]( void ) {
+   return( ( std::rand() % 4 == 0 ) ? inf : double( 1 + std::rand() % 20 ) );
+   };
+
+  const unsigned m = n + std::rand() % ( 2 * n );
+  SATBlock::v_Clause clauses( m );
+  SATBlock::v_Weight weights( m );
+  for( unsigned c = 0 ; c < m ; ++c ) {
+   clauses[ c ] = rnd_clause();
+   weights[ c ] = rnd_weight();
+   }
+  SATBlock b;
+  b.load( n , std::move( clauses ) , std::move( weights ) );
+  b.generate_abstract_variables();
+  auto & x = b.get_variables();
+
+  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+  s->set_par( SATSolver::intMaxSAT , 1 );
+  b.register_Solver( s );
+
+  std::vector< int > fixed( n , -1 );  // the value of a fixed x, -1 if not
+  for( unsigned step = 0 ; step < 15 ; ++step ) {
+   // the first compute() on the instance as it is, then a Modification
+   // before each of the others: mostly new costs, as the Lagrangian term of
+   // a decomposition gives, then weights changed (a clause possibly turning
+   // hard or soft), clauses added, a variable fixed or all of them unfixed
+   if( step > 0 )
+    switch( std::rand() % 8 ) {
+     case( 0 ): case( 1 ): case( 2 ): {
+      std::vector< double > c( n );
+      for( auto & ci : c )
+       ci = int( std::rand() % 21 ) - 10;
+      b.chg_costs( c , Block::Range( 0 , n ) );
+      break;
+      }
+     case( 3 ): {
+      const unsigned first = std::rand() % b.get_number_clauses();
+      const unsigned k = 1 + std::rand() %
+		std::min( 3u , unsigned( b.get_number_clauses() ) - first );
+      std::vector< double > w( k );
+      for( auto & wi : w )
+       wi = rnd_weight();
+      b.chg_weights( w , Block::Range( first , first + k ) );
+      break;
+      }
+     case( 4 ): {
+      SATBlock::v_Clause nc( 1 + std::rand() % 2 );
+      SATBlock::v_Weight nw( nc.size() );
+      for( unsigned c = 0 ; c < nc.size() ; ++c ) {
+       nc[ c ] = rnd_clause();
+       nw[ c ] = rnd_weight();
+       }
+      b.add_clauses( std::move( nc ) , std::move( nw ) );
+      break;
+      }
+     case( 5 ): case( 6 ): {
+      const unsigned i = std::rand() % n;
+      fixed[ i ] = std::rand() % 2;
+      x[ i ].is_fixed( false );
+      x[ i ].set_value( fixed[ i ] );
+      x[ i ].is_fixed( true );
+      break;
+      }
+     default:
+      for( unsigned i = 0 ; i < n ; ++i ) {
+       fixed[ i ] = -1;
+       x[ i ].is_fixed( false );
+       }
+     }
+
+   // the optimum by enumeration, among the values of the fixed variables
+   double best = inf;
+   for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
+    bool agree = true;
+    for( unsigned i = 0 ; i < n ; ++i )
+     if( ( fixed[ i ] >= 0 ) && ( int( ( mask >> i ) & 1 ) != fixed[ i ] ) )
+      agree = false;
+    if( ! agree )
+     continue;
+    set_values( b , mask );
+    if( b.is_feasible() )
+     best = std::min( best , b.get_objective_value() );
+    }
+
+   const int status = s->compute();
+   if( best == inf ) {
+    assert( status == Solver::kInfeasible );
+    ++infeasible;
+    }
+   else {
+    assert( status == Solver::kOK );
+    assert( ( s->get_lb() == best ) && ( s->get_ub() == best ) );
+    s->get_var_solution();
+    assert( b.is_feasible() && ( b.get_objective_value() == best ) );
+    }
+   ++steps;
+   }
+  b.unregister_Solvers( true );
+  }
+ std::cout << solver_name << ": OLL optimal through " << steps
+	   << " Modification kept by the same Solver (" << infeasible
+	   << " infeasible)" << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
 /// OLL on the instances of the MaxSAT Evaluation whose optimum is known: the
 /// optimum if it finishes, bounds around it if the time limit stops it
 
@@ -933,6 +1055,7 @@ int main( int argc , char ** argv )
  solver_name = "CaDiCaLSATSolver";
  test_solver();
  test_oll();
+ test_oll_incremental();
  test_oll_mse();
  test_solver_satlib();
 #endif
@@ -940,6 +1063,7 @@ int main( int argc , char ** argv )
  solver_name = "MiniSATSolver";
  test_solver();
  test_oll();
+ test_oll_incremental();
  test_oll_mse();
  test_solver_satlib();
 #endif

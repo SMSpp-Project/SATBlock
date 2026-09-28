@@ -73,11 +73,11 @@ namespace SMSpp_di_unipi_it
  *
  * The SAT solver being incremental, the clauses added to the SATBlock [see
  * SATBlock::add_clauses()] are given to it on top of those it has, and so
- * are the weights changed [see SATBlock::chg_weights()] as long as no clause
- * turns from hard to soft or back; a Variable being fixed or unfixed is
- * taken care of by the assumptions. Any other Modification makes the
- * clauses be given again to the SAT solver from scratch at the next
- * compute().
+ * are the clauses turned from soft to hard [see SATBlock::chg_weights()];
+ * the weights and the costs are read anew by each compute(), and a Variable
+ * being fixed or unfixed is taken care of by the assumptions. A clause
+ * turned from hard to soft, and any other Modification, make the clauses be
+ * given again to the SAT solver from scratch at the next compute().
  *
  * The status returned by compute() is kOK if the hard clauses are
  * satisfiable, with a solution that get_var_solution() writes into the
@@ -97,13 +97,13 @@ namespace SMSpp_di_unipi_it
  * an assumption: its literal if it is a unit clause, the negation of a new
  * relaxation variable added to it otherwise; the cost c_i of a variable is
  * the unit soft clause "not x_i" of weight c_i if it is positive, and "x_i"
- * of weight - c_i if it is negative, c_i being then paid anyway. Each time the SAT solver finds
- * that the assumptions cannot hold together, the soft ones in the reason
- * (the *core*) have their weight lowered by the smallest one among them,
- * which is added to the lower bound, and a totalizer over the core gives a
- * new assumption, "at most one of them is violated", with that weight; when
- * such an assumption is in a core in turn, "at most k" becomes "at most
- * k + 1".
+ * of weight - c_i if it is negative, c_i being then paid anyway. Each time
+ * the SAT solver finds that the assumptions cannot hold together, the soft
+ * ones in the reason (the *core*) have their weight lowered by the smallest
+ * one among them, which is added to the lower bound, and a totalizer over
+ * the core gives a new assumption, "at most one of them is violated", with
+ * that weight; when such an assumption is in a core in turn, "at most k"
+ * becomes "at most k + 1".
  *
  * The assumptions are *stratified* by weight (Ansotegui, Bonet, Gabas,
  * Levy, SAT 2012): only those whose weight is at least a threshold are
@@ -127,8 +127,24 @@ namespace SMSpp_di_unipi_it
  * kStopTime get_lb() is the lower bound reached and get_ub() the value of
  * the best solution found, +INF if none, which get_var_solution() writes;
  * kInfeasible means that the hard clauses are unsatisfiable, as without
- * intMaxSAT. The clauses OLL adds are thrown away, i.e., the clauses are
- * given again to the SAT solver at the next compute(). */
+ * intMaxSAT.
+ *
+ * OLL is *incremental*: what it makes stays with the SAT solver for the
+ * following compute(), i.e., the clauses the SAT solver has learnt, the
+ * relaxation variables of the soft clauses, the totalizers and the cores.
+ * A core depends on the hard clauses, which can only grow as long as the
+ * SAT solver is kept, and on the fixed variables in its reason, but not on
+ * the weights: at the beginning of each compute() the cores found so far
+ * whose fixed variables are still fixed so are relaxed again, in the order
+ * they were found, with the weights and the costs of now, the smallest
+ * weight of each going to the lower bound as if the SAT solver had just
+ * found it, and a core none of whose assumptions weighs anything any longer
+ * is left aside. The SAT solver is then called only for what these cores do
+ * not already say, which is what makes a sequence of close instances, such
+ * as the subproblems of a Lagrangian decomposition with different
+ * multipliers, cheaper to solve than each of them from scratch. A core
+ * with a fixed variable in its reason is kept only for the compute() whose
+ * fixed variables include those, and it never becomes a clause. */
 
 class SATSolver : public Solver
 {
@@ -281,17 +297,29 @@ class SATSolver : public Solver
  void process_outstanding_Modification( void );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the clauses the SAT solver has to have: 1 for a hard one, 0 otherwise
+ /** Returns, for each clause of the physical representation, 1 if it is
+  * hard and its FRowConstraint (if the abstract representation has been
+  * generated) is not relaxed, 0 otherwise. */
+
+ [[nodiscard]] std::vector< unsigned char > hard_clauses( void ) const;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// creates the SAT solver anew and gives it the clauses of the SATBlock
+ /** Creates the SAT solver anew and gives it the hard clauses [see
+  * hard_clauses()], throwing away what OLL has made with the previous
+  * one. */
 
  void load_clauses( void );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// gives the SAT solver the hard clauses of the SATBlock it does not have
- /** Gives the SAT solver the hard clauses of the physical representation
-  * from the f_n_loaded-th on, i.e., those added to the SATBlock since the
-  * SAT solver had its clauses. */
+ /** Gives the SAT solver the hard clauses it does not have, i.e., those
+  * added to the SATBlock and those turned from soft to hard since it had
+  * its clauses; if a clause it has is no longer hard, which cannot be taken
+  * away from it, it calls load_clauses() instead. */
 
- void add_new_clauses( void );
+ void sync_clauses( void );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// solves the weighted MaxSAT by OLL, under the given assumptions
@@ -306,10 +334,12 @@ class SATSolver : public Solver
  /// reduces a core of OLL by trimming and minimization
  /** Reduces the core \p core of OLL, soft assumptions that do not hold
   * together with the assumptions \p fixed, by trimming and minimization
-  * [see the comments to the class]; what is left is still a core. */
+  * [see the comments to the class]; what is left is still a core, together
+  * with the assumptions of \p fixed in the reason of any of the answers of
+  * the SAT solver on the way, which are added to \p cond. */
 
  void reduce_core( const std::vector< int > & fixed ,
-		   std::vector< int > & core );
+		   std::vector< int > & core , std::vector< int > & cond );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// builds the tree of a totalizer over the given literals, no clause yet
@@ -400,6 +430,18 @@ class SATSolver : public Solver
   };
 
  std::vector< TotNode > v_tot;  ///< the nodes of all the totalizers
+
+ /// the assumption satisfying each soft clause, 0 if not made yet
+ std::vector< int > v_soft;
+
+ /// a core found by OLL
+ struct Core {
+  std::vector< int > lits;     ///< its soft assumptions
+  std::vector< int > cond;     ///< the fixed variables in its reason, sorted
+  int root = -1;               ///< its totalizer, -1 if a single assumption
+  };
+
+ std::vector< Core > v_cores;  ///< the cores found with this SAT solver
 
  int f_status = kUnEval;       ///< status of the last compute()
 
