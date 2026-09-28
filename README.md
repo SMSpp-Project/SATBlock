@@ -46,8 +46,13 @@ your system.
   requirements.
 - Optionally, [CaDiCaL](https://github.com/arminbiere/cadical) for
   `CaDiCaLSATSolver` (found through `CADICAL_ROOT`) and
-  [MiniSat](http://minisat.se) for `MiniSATSolver` (found through
-  `MINISAT_ROOT`); the module is built without the ones that are not found.
+  [MiniSat](https://github.com/stp/minisat) for `MiniSATSolver` (found
+  through `MINISAT_ROOT`); the module is built without the ones that are not
+  found, and the options `SATBlock_USE_CADICAL` and `SATBlock_USE_MINISAT`
+  leave out one that is. How to install them, from a package or from their
+  sources, is in the [installation guide of
+  SMS++](https://gitlab.com/smspp/smspp-project/-/wikis/Installing-SMS++#cadical);
+  `INSTALL.sh` of the umbrella project does it.
 
 ### Build and install with CMake
 
