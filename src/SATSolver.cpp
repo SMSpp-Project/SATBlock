@@ -157,7 +157,8 @@ void SATSolver::process_outstanding_Modification( void )
    if( objf && ( fmod->function() == objf ) )
     continue;
   if( auto smod = std::dynamic_pointer_cast< const SATBlockMod >( mod ) ) {
-   if( smod->type() == SATBlockMod::eAddClauses )
+   if( ( smod->type() == SATBlockMod::eAddClauses ) ||
+       ( smod->type() == SATBlockMod::eChgCost ) )
     continue;
    if( smod->type() == SATBlockMod::eChgWeight ) {
     // the clauses the SAT solver has (v_hard) against those hard now
@@ -267,8 +268,12 @@ int SATSolver::compute( bool changedvars )
   res = oll( assumptions );
  else {
   res = sat_solve( assumptions );
-  f_lb = ( res == 10 ? 0 : ( res == 20 ? Inf< double >() :
-			     - Inf< double >() ) );
+  // the weights are not negative, the costs may be
+  double lb = 0;
+  for( auto c : f_sat->get_costs() )
+   lb += std::min( c , 0.0 );
+  f_lb = ( res == 10 ? lb : ( res == 20 ? Inf< double >() :
+			      - Inf< double >() ) );
   if( res == 20 )
    for( auto lit : assumptions )
     v_failed[ std::abs( lit ) - 1 ] = sat_failed( lit ) ? 1 : 0;
@@ -279,9 +284,11 @@ int SATSolver::compute( bool changedvars )
    f_status = kOK;
    if( MaxSATAlg == 1 )  // OLL has it already
     break;
-   // the weight of the soft clauses the solution violates
+   // the weight of the soft clauses the solution violates, plus the costs
+   // of its true variables
    const auto & clauses = f_sat->get_clauses();
    const auto & w = f_sat->get_weights();
+   const auto & c = f_sat->get_costs();
    f_ub = 0;
    for( unsigned int i = 0 ; i < clauses.size() ; ++i )
     if( ( ! f_sat->is_hard( i ) ) &&
@@ -289,6 +296,9 @@ int SATSolver::compute( bool changedvars )
 		      [ this ]( int lit ) {
 	 return( sat_value( std::abs( lit ) ) == ( lit > 0 ) ); } ) )
      f_ub += w[ i ];
+   for( unsigned int i = 0 ; i < c.size() ; ++i )
+    if( ( c[ i ] != 0 ) && sat_value( int( i + 1 ) ) )
+     f_ub += c[ i ];
    break;
    }
   case( 20 ):
@@ -452,6 +462,19 @@ int SATSolver::oll( const std::vector< int > & fixed )
     }
   }
 
+ // the costs of the variables: c_i > 0 is the unit soft clause "not x_i" of
+ // weight c_i, c_i < 0 the unit soft clause "x_i" of weight - c_i with c_i
+ // paid anyway
+ const auto & costs = f_sat->get_costs();
+ for( unsigned int i = 0 ; i < costs.size() ; ++i )
+  if( costs[ i ] > 0 )
+   add_soft( - int( i + 1 ) , costs[ i ] , -1 , 0 );
+  else
+   if( costs[ i ] < 0 ) {
+    add_soft( int( i + 1 ) , - costs[ i ] , -1 , 0 );
+    f_lb += costs[ i ];
+    }
+
  // the stratification: the assumptions weighing at least tau are given to
  // the SAT solver; lower_level() lowers tau to take the next weights, until
  // the assumptions are at least 1.25 per distinct weight, returning false
@@ -481,7 +504,8 @@ int SATSolver::oll( const std::vector< int > & fixed )
   return( true );
   };
 
- // the weight of the soft clauses the current solution violates
+ // the weight of the soft clauses the current solution violates, plus the
+ // costs of its true variables
  auto model_cost = [ & ]( void ) {
   double cost = 0;
   for( unsigned int i = 0 ; i < clauses.size() ; ++i )
@@ -490,6 +514,9 @@ int SATSolver::oll( const std::vector< int > & fixed )
 		     [ this ]( int lit ) {
 	return( sat_value( std::abs( lit ) ) == ( lit > 0 ) ); } ) )
     cost += weights[ i ];
+  for( unsigned int i = 0 ; i < costs.size() ; ++i )
+   if( ( costs[ i ] != 0 ) && sat_value( int( i + 1 ) ) )
+    cost += costs[ i ];
   return( cost );
   };
 

@@ -83,9 +83,11 @@ namespace SMSpp_di_unipi_it
  * satisfiable, with a solution that get_var_solution() writes into the
  * ColVariable x, kInfeasible if they are not, kStopTime if the time limit
  * dblMaxTime is reached first, and kError if the SAT solver gives up for any
- * other reason. After kOK get_lb() is 0 and get_ub() the sum of the weights
- * of the soft clauses the solution violates, both 0 if all the clauses are
- * hard; both are +INF after kInfeasible, and -INF and +INF otherwise.
+ * other reason. After kOK get_ub() is the value of the solution, i.e., the
+ * sum of the weights of the soft clauses it violates plus the costs of its
+ * true variables, and get_lb() the sum of the negative costs, both 0 if all
+ * the clauses are hard and there are no costs; both are +INF after
+ * kInfeasible, and -INF and +INF otherwise.
  *
  * With the parameter intMaxSAT set to 1, compute() solves instead the
  * weighted MaxSAT problem, i.e., it looks for a solution of the hard clauses
@@ -93,7 +95,9 @@ namespace SMSpp_di_unipi_it
  * core-guided algorithm OLL (Andres, Kaufmann, Matheis, Schaub, ICLP 2012;
  * Morgado, Dodaro, Marques-Silva, CP 2014). Each soft clause is satisfied by
  * an assumption: its literal if it is a unit clause, the negation of a new
- * relaxation variable added to it otherwise. Each time the SAT solver finds
+ * relaxation variable added to it otherwise; the cost c_i of a variable is
+ * the unit soft clause "not x_i" of weight c_i if it is positive, and "x_i"
+ * of weight - c_i if it is negative, c_i being then paid anyway. Each time the SAT solver finds
  * that the assumptions cannot hold together, the soft ones in the reason
  * (the *core*) have their weight lowered by the smallest one among them,
  * which is added to the lower bound, and a totalizer over the core gives a
@@ -231,7 +235,7 @@ class SATSolver : public Solver
  [[nodiscard]] OFValue get_lb( void ) override;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// the weight of the soft clauses the solution violates, +INF if none
+ /// the value of the solution: violated weight plus costs, +INF if none
 
  [[nodiscard]] OFValue get_ub( void ) override;
 

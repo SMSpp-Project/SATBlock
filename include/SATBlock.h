@@ -61,16 +61,20 @@ namespace SMSpp_di_unipi_it
  *
  * Each clause has a weight: a clause of infinite weight is *hard*, i.e., it
  * has to be satisfied, while one of finite (non-negative) weight is *soft*,
- * i.e., it may be violated at the cost of its weight. When all the clauses
- * are hard this is the satisfiability problem; otherwise it is the weighted
- * partial MaxSAT problem, i.e., finding values of the variables satisfying
- * all the hard clauses and minimizing the sum of the weights of the violated
- * soft ones.
+ * i.e., it may be violated at the cost of its weight. Each variable may also
+ * have a *cost* c_i, of any sign, paid if it is true. When all the clauses
+ * are hard and there are no costs this is the satisfiability problem;
+ * otherwise it is the weighted partial MaxSAT problem, i.e., finding values
+ * of the variables satisfying all the hard clauses and minimizing the sum of
+ * the weights of the violated soft ones plus that of the costs of the true
+ * variables. The costs are what the Lagrangian terms of a decomposition
+ * become, a unit soft clause being the same as a cost of the other sign.
  *
  * The "physical representation" of the SATBlock is the number n of the
  * variables, the clauses, each one a std::vector of int in the DIMACS
  * convention (the literal i + 1 is x_i, the literal - ( i + 1 ) is its
- * negation), and the weights of the clauses. A literal appears at most once
+ * negation), the weights of the clauses and the costs of the variables. A
+ * literal appears at most once
  * in a clause, and a clause may be a tautology, i.e., hold both a variable
  * and its negation, in which case it is always satisfied; the empty clause
  * is never satisfied.
@@ -91,8 +95,14 @@ namespace SMSpp_di_unipi_it
  *   in the static group "clauses", a tautology being the row r_c \f$\geq\f$
  *   -INF, always satisfied;
  *
- * - the FRealObjective \f$\min \sum_c w_c r_c\f$, w_c being the weight of
- *   the soft clause c and 0 for a hard one.
+ * - the FRealObjective \f$\min \sum_c w_c r_c + \sum_i c_i x_i\f$, w_c
+ *   being the weight of the soft clause c and 0 for a hard one, with the
+ *   terms of the r first and those of the x after them.
+ *
+ * A change of the coefficients of the Objective, such as the one of a
+ * LagBFunction writing there its Lagrangian term, is a change of the costs
+ * and of the weights, which the SATBlock brings into its physical
+ * representation [see add_Modification()].
  *
  * The r_c and the rows of the clauses added after the abstract
  * representation has been generated [see add_clauses()] are in the dynamic
@@ -242,6 +252,16 @@ class SATBlock : public Block
  [[nodiscard]] bool all_hard( void ) const;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the costs of the variables, 0 if they have none
+
+ [[nodiscard]] c_v_Weight & get_costs( void ) const { return( v_costs ); }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns true if some variable has a nonzero cost
+
+ [[nodiscard]] bool has_costs( void ) const;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns true if the i-th clause holds both a variable and its negation
 
  [[nodiscard]] bool is_tautology( unsigned int i ) const;
@@ -321,6 +341,15 @@ class SATBlock : public Block
 
  [[nodiscard]] double get_violated_weight( void ) const;
 
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the value of the MaxSAT objective at the values of the x
+ /** Returns the value of the MaxSAT objective at the current values of the
+  * ColVariable x, i.e., get_violated_weight() plus the costs of the true
+  * variables; the ColVariable must have been generated, otherwise an
+  * exception is thrown. */
+
+ [[nodiscard]] double get_objective_value( void ) const;
+
 /*------------------------ Methods for the Solution ------------------------*/
  /// returns a ColVariableSolution of the SATBlock
  /** Returns a ColVariableSolution [see ColVariableSolution.h] of the
@@ -337,6 +366,16 @@ class SATBlock : public Block
   * what load() reads back. */
 
  void print( std::ostream & output , char vlvl = 0 ) const override;
+
+/*------------------ METHODS FOR HANDLING MODIFICATIONS --------------------*/
+ /// extends Block::add_Modification() to the changes of the Objective
+ /** Extends Block::add_Modification(): a change of the coefficients of the
+  * Objective is brought into the physical representation, the coefficient
+  * of an x becoming its cost and that of the r of a soft clause its weight,
+  * with the SATBlockMod that go with them; the Modification is then passed
+  * on as any other. */
+
+ void add_Modification( sp_Mod mod , ChnlName chnl = 0 ) override;
 
 /*----------- METHODS FOR MODIFYING THE PHYSICAL REPRESENTATION ------------*/
 /** @name Methods for modifying the physical representation
@@ -370,6 +409,25 @@ class SATBlock : public Block
 		   ModParam issueAMod = eNoBlck );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// changes the costs of the variables in the Range
+ /** Changes the costs of the variables in the Range \p rng, the new ones
+  * being in \p NCost, as well as their coefficients in the Objective if it
+  * has been generated. An exception is thrown if \p NCost is shorter than
+  * \p rng or a cost is not finite. */
+
+ void chg_costs( MF_dbl_sp NCost , Range rng = INFRange ,
+		 ModParam issueMod = eNoBlck , ModParam issueAMod = eNoBlck );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// changes the costs of the variables in the Subset
+ /** Same as chg_costs( Range ), for the variables in the Subset \p nms;
+  * \p ordered tells if \p nms is ordered increasingly, which it is made to
+  * be otherwise, together with \p NCost. */
+
+ void chg_costs( MF_dbl_sp NCost , Subset && nms , bool ordered = false ,
+		 ModParam issueMod = eNoBlck , ModParam issueAMod = eNoBlck );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// adds the given clauses, with their weights, after the existing ones
  /** Adds the clauses in \p clauses after the existing ones, with the
   * weights in \p weights, all hard if it is empty [see load()]. In the
@@ -400,7 +458,10 @@ class SATBlock : public Block
   *
   * - the double variable "Weights", over the dimension "NumberClauses", the
   *   weights of the clauses, +INF for the hard ones; it is absent if all the
-  *   clauses are hard. */
+  *   clauses are hard;
+  *
+  * - the double variable "Costs", over the dimension "NumberVariables", the
+  *   costs of the variables; it is absent if they are all 0. */
 
  void serialize( netCDF::NcGroup & group ) const override;
 
@@ -437,6 +498,16 @@ class SATBlock : public Block
  ColVariable & violation( unsigned int i );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// changes the cost of the i-th variable, in the Objective too
+
+ void set_cost( unsigned int i , double c , ModParam issueAMod );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the index of the clause whose r is \p r, Inf< Index >() if none
+
+ [[nodiscard]] Index violation_index( const Variable * r ) const;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// changes the weight of the i-th clause, in the abstract representation too
 
  void set_weight( unsigned int i , double w , ModParam issueAMod );
@@ -453,6 +524,8 @@ class SATBlock : public Block
  v_Clause v_clauses;       ///< the clauses, in the DIMACS convention
 
  v_Weight v_weights;       ///< the weights of the clauses, +INF if hard
+
+ v_Weight v_costs;         ///< the costs of the variables
 
  std::vector< ColVariable > v_x;     ///< the ColVariable x of the variables
 
@@ -493,7 +566,8 @@ class SATBlock : public Block
 /// derived class from Modification for the changes of a SATBlock
 /** Derived class from Modification for the changes of the physical
  * representation of a SATBlock: its type says what has changed, and the
- * derived classes SATBlockRngdMod and SATBlockSbstMod which clauses. */
+ * derived classes SATBlockRngdMod and SATBlockSbstMod which clauses (or
+ * which variables, for eChgCost). */
 
 class SATBlockMod : public Modification
 {
@@ -506,7 +580,8 @@ class SATBlockMod : public Modification
 
  enum SATBlock_mod_type {
   eChgWeight = 0 ,  ///< the weights of some clauses have changed
-  eAddClauses       ///< some clauses have been added
+  eAddClauses ,     ///< some clauses have been added
+  eChgCost          ///< the costs of some variables have changed
   };
 
 /*------------------------ CONSTRUCTOR & DESTRUCTOR ------------------------*/
@@ -542,6 +617,7 @@ class SATBlockMod : public Modification
   switch( f_type ) {
    case( eChgWeight ):  output << "change weights "; break;
    case( eAddClauses ): output << "add clauses "; break;
+   case( eChgCost ):    output << "change costs "; break;
    default:             output << "type " << f_type << " ";
    }
   }

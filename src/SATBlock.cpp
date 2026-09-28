@@ -24,6 +24,7 @@
 #include <numeric>
 #include <sstream>
 
+#include "C05Function.h"
 #include "ColVariableSolution.h"
 #include "LinearFunction.h"
 #include "SATBlock.h"
@@ -96,6 +97,7 @@ void SATBlock::load( unsigned int n_var , v_Clause && clauses ,
  else
   v_weights = std::move( weights );
  check_weights();
+ v_costs.assign( f_n_var , 0 );
 
  if( anyone_there() )
   add_Modification( std::make_shared< NBModification >( this ) );
@@ -276,6 +278,19 @@ void SATBlock::deserialize( const netCDF::NcGroup & group )
   }
  check_weights();
 
+ v_costs.assign( f_n_var , 0 );
+ auto c = group.getVar( "Costs" );
+ if( ( ! c.isNull() ) && f_n_var ) {
+  if( c.getDimCount() != 1 || c.getDim( 0 ).getSize() != f_n_var )
+   throw( std::invalid_argument( "SATBlock::deserialize: Costs must have "
+				 "one element per variable" ) );
+  c.getVar( v_costs.data() );
+  if( ! std::all_of( v_costs.begin() , v_costs.end() ,
+		     []( double x ) { return( std::isfinite( x ) ); } ) )
+   throw( std::invalid_argument( "SATBlock::deserialize: a cost is not "
+				 "finite" ) );
+  }
+
  Block::deserialize( group );
  }
 
@@ -401,11 +416,14 @@ void SATBlock::generate_objective( Configuration * objc )
 
  generate_abstract_variables();
 
- // the i-th term is the r of the i-th clause, 0 if the clause is hard
+ // the i-th term is the r of the i-th clause, 0 if the clause is hard, and
+ // the terms of the x, with their costs, come after them
  LinearFunction::v_coeff_pair coeffs;
- coeffs.reserve( v_clauses.size() );
+ coeffs.reserve( v_clauses.size() + f_n_var );
  for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
   coeffs.emplace_back( & violation( i ) , is_hard( i ) ? 0 : v_weights[ i ] );
+ for( unsigned int i = 0 ; i < f_n_var ; ++i )
+  coeffs.emplace_back( & v_x[ i ] , v_costs[ i ] );
 
  f_obj.set_function( new LinearFunction( std::move( coeffs ) , 0 ) , eNoMod );
  f_obj.set_sense( Objective::eMin , eNoMod );
@@ -422,6 +440,30 @@ bool SATBlock::all_hard( void ) const
 {
  return( std::all_of( v_weights.begin() , v_weights.end() ,
 		      []( double w ) { return( w == Inf< double >() ); } ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+bool SATBlock::has_costs( void ) const
+{
+ return( std::any_of( v_costs.begin() , v_costs.end() ,
+		      []( double c ) { return( c != 0 ); } ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+Block::Index SATBlock::violation_index( const Variable * r ) const
+{
+ if( ( ! v_r.empty() ) && ( r >= v_r.data() ) &&
+     ( r < v_r.data() + v_r.size() ) )
+  return( Index( static_cast< const ColVariable * >( r ) - v_r.data() ) );
+ Index i = v_r.size();
+ for( const auto & lr : l_r )
+  if( & lr == r )
+   return( i );
+  else
+   ++i;
+ return( Inf< Index >() );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -477,6 +519,17 @@ double SATBlock::get_violated_weight( void ) const
 
 /*--------------------------------------------------------------------------*/
 
+double SATBlock::get_objective_value( void ) const
+{
+ double value = get_violated_weight();
+ for( unsigned int i = 0 ; i < f_n_var ; ++i )
+  if( v_x[ i ].get_value() > 0.5 )
+   value += v_costs[ i ];
+ return( value );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 Solution * SATBlock::get_Solution( Configuration * solc , bool emptys )
 {
  auto sol = new ColVariableSolution();
@@ -493,7 +546,9 @@ void SATBlock::serialize( netCDF::NcGroup & group ) const
 {
  Block::serialize( group );
 
- group.addDim( "NumberVariables" , f_n_var );
+ auto nv = group.addDim( "NumberVariables" , f_n_var );
+ if( has_costs() )
+  group.addVar( "Costs" , netCDF::NcDouble() , nv ).putVar( v_costs.data() );
 
  if( v_clauses.empty() )
   return;
@@ -522,8 +577,9 @@ void SATBlock::print( std::ostream & output , char vlvl ) const
   return;
   }
 
- // all hard: DIMACS CNF, otherwise WCNF in the format from 2022 on
- const bool cnf = all_hard();
+ // all hard: DIMACS CNF, otherwise WCNF in the format from 2022 on, the
+ // costs being unit soft clauses, and the constant they leave a comment
+ const bool cnf = all_hard() && ( ! has_costs() );
  if( cnf )
   output << "p cnf " << f_n_var << " " << v_clauses.size() << std::endl;
  const auto prec = output.precision(
@@ -539,6 +595,17 @@ void SATBlock::print( std::ostream & output , char vlvl ) const
    output << lit << " ";
   output << "0" << std::endl;
   }
+ double constant = 0;
+ for( unsigned int i = 0 ; i < f_n_var ; ++i )
+  if( v_costs[ i ] > 0 )  // x_i true costs c_i: the clause "not x_i"
+   output << v_costs[ i ] << " -" << i + 1 << " 0" << std::endl;
+  else
+   if( v_costs[ i ] < 0 ) {  // x_i false costs - c_i, and c_i is paid
+    output << - v_costs[ i ] << " " << i + 1 << " 0" << std::endl;
+    constant += v_costs[ i ];
+    }
+ if( constant != 0 )
+  output << "c constant " << constant << std::endl;
  output.precision( prec );
  }
 
@@ -564,9 +631,161 @@ void SATBlock::set_weight( unsigned int i , double w , ModParam issueAMod )
   else
    r.is_fixed( false , un_ModBlock( issueAMod ) );
   }
- if( AR & HasObj )
-  static_cast< LinearFunction * >( f_obj.get_function() )->modify_coefficient(
-		       i , is_hard( i ) ? 0 : w , un_ModBlock( issueAMod ) );
+ if( AR & HasObj ) {
+  auto lf = static_cast< LinearFunction * >( f_obj.get_function() );
+  lf->modify_coefficient( lf->is_active( & r ) , is_hard( i ) ? 0 : w ,
+			  un_ModBlock( issueAMod ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::set_cost( unsigned int i , double c , ModParam issueAMod )
+{
+ v_costs[ i ] = c;
+ if( ( AR & HasObj ) && not_dry_run( issueAMod ) ) {
+  auto lf = static_cast< LinearFunction * >( f_obj.get_function() );
+  lf->modify_coefficient( lf->is_active( & v_x[ i ] ) , c ,
+			  un_ModBlock( issueAMod ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::chg_costs( MF_dbl_sp NCost , Range rng ,
+			  ModParam issueMod , ModParam issueAMod )
+{
+ rng.second = std::min( rng.second , Index( f_n_var ) );
+ if( rng.second <= rng.first )  // nothing to change
+  return;
+
+ if( NCost.size() < rng.second - rng.first )
+  throw( std::invalid_argument( "SATBlock::chg_costs: the span is shorter "
+				"than the Range" ) );
+
+ if( std::equal( NCost.begin() , NCost.begin() + ( rng.second - rng.first ) ,
+		 v_costs.begin() + rng.first ) )
+  return;  // nothing changes, avoid issuing the Modification
+
+ for( Index i = rng.first ; i < rng.second ; ++i )
+  if( ! std::isfinite( NCost[ i - rng.first ] ) )
+   throw( std::invalid_argument( "SATBlock::chg_costs: cost " +
+				 std::to_string( NCost[ i - rng.first ] ) +
+				 " of variable " + std::to_string( i ) ) );
+
+ if( not_dry_run( issueMod ) )
+  for( Index i = rng.first ; i < rng.second ; ++i )
+   set_cost( i , NCost[ i - rng.first ] , issueAMod );
+
+ if( issue_pmod( issueMod ) )
+  add_Modification( std::make_shared< SATBlockRngdMod >( this ,
+					SATBlockMod::eChgCost , rng ) ,
+		    Observer::par2chnl( issueMod ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::chg_costs( MF_dbl_sp NCost , Subset && nms , bool ordered ,
+			  ModParam issueMod , ModParam issueAMod )
+{
+ if( nms.empty() )  // nothing to change
+  return;
+
+ if( NCost.size() < nms.size() )
+  throw( std::invalid_argument( "SATBlock::chg_costs: the span is shorter "
+				"than the Subset" ) );
+
+ // the Subset ordered, with its costs
+ std::vector< std::pair< Index , double > > nc( nms.size() );
+ for( Index k = 0 ; k < nms.size() ; ++k ) {
+  if( nms[ k ] >= f_n_var )
+   throw( std::invalid_argument( "SATBlock::chg_costs: variable " +
+				 std::to_string( nms[ k ] ) +
+				 " does not exist" ) );
+  if( ! std::isfinite( NCost[ k ] ) )
+   throw( std::invalid_argument( "SATBlock::chg_costs: cost " +
+				 std::to_string( NCost[ k ] ) +
+				 " of variable " + std::to_string( nms[ k ] ) ) );
+  nc[ k ] = { nms[ k ] , NCost[ k ] };
+  }
+ if( ! ordered )
+  std::sort( nc.begin() , nc.end() , []( const auto & a , const auto & b ) {
+   return( a.first < b.first ); } );
+
+ if( std::all_of( nc.begin() , nc.end() , [ this ]( const auto & p ) {
+      return( v_costs[ p.first ] == p.second ); } ) )
+  return;  // nothing changes, avoid issuing the Modification
+
+ if( not_dry_run( issueMod ) )
+  for( const auto & [ i , c ] : nc )
+   set_cost( i , c , issueAMod );
+
+ if( issue_pmod( issueMod ) ) {
+  for( Index k = 0 ; k < nc.size() ; ++k )
+   nms[ k ] = nc[ k ].first;
+  add_Modification( std::make_shared< SATBlockSbstMod >( this ,
+			     SATBlockMod::eChgCost , std::move( nms ) ) ,
+		    Observer::par2chnl( issueMod ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+/*------------------ METHODS FOR HANDLING MODIFICATIONS --------------------*/
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::add_Modification( sp_Mod mod , ChnlName chnl )
+{
+ // a change of the coefficients of the Objective, e.g., the Lagrangian term
+ // a LagBFunction writes there, is a change of the costs of the x and of the
+ // weights of the soft clauses, which the physical representation follows
+ if( AR & HasObj ) {
+  auto lf = static_cast< LinearFunction * >( f_obj.get_function() );
+  Subset idx;
+  if( auto rm = std::dynamic_pointer_cast< const C05FunctionModLinRngd >(
+									mod ) ) {
+   if( rm->function() == lf )
+    for( auto k = rm->range().first ; k < rm->range().second ; ++k )
+     idx.push_back( k );
+   }
+  else
+   if( auto sm = std::dynamic_pointer_cast< const C05FunctionModLinSbst >(
+									mod ) )
+    if( sm->function() == lf )
+     idx.assign( sm->subset().begin() , sm->subset().end() );
+
+  if( ! idx.empty() ) {
+   Subset xs , cs;
+   std::vector< double > xc , cw;
+   for( auto k : idx ) {
+    const auto var = lf->get_active_var( k );
+    const double coeff = lf->get_coefficient( k );
+    if( ( ! v_x.empty() ) && ( var >= v_x.data() ) &&
+	( var < v_x.data() + v_x.size() ) ) {
+     xs.push_back( Index( static_cast< const ColVariable * >( var ) -
+			  v_x.data() ) );
+     xc.push_back( coeff );
+     continue;
+     }
+    const auto c = violation_index( var );
+    if( c == Inf< Index >() )
+     throw( std::logic_error( "SATBlock::add_Modification: a variable of "
+			      "the Objective is neither an x nor an r" ) );
+    if( ! is_hard( c ) ) {  // the r of a hard clause is fixed to 0
+     cs.push_back( c );
+     cw.push_back( coeff );
+     }
+    }
+   // the physical representation only, the abstract one being changed
+   if( ! xs.empty() )
+    chg_costs( xc , std::move( xs ) , false , make_par( eNoBlck , chnl ) ,
+	       eDryRun );
+   if( ! cs.empty() )
+    chg_weights( cw , std::move( cs ) , false , make_par( eNoBlck , chnl ) ,
+		 eDryRun );
+   }
+  }
+
+ Block::add_Modification( mod , chnl );
  }
 
 /*--------------------------------------------------------------------------*/

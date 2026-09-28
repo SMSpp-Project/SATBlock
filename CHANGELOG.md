@@ -60,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`intMaxSATTrim`, `intMaxSATMinBudget`), the best solution found being kept
   when the time limit stops it, the test checking it against the
   enumeration on random instances
+- the costs of the variables in `SATBlock`, paid when a variable is true,
+  which is what the Lagrangian term of a decomposition becomes: in the
+  physical representation, in netCDF (`Costs`), in the WCNF written (as unit
+  soft clauses, the constant of the negative ones in a comment) and in the
+  Objective, after the terms of the clauses; `chg_costs()` on a Range or a
+  Subset, with the `SATBlockMod` of type `eChgCost`, and
+  `get_objective_value()`; a change of the coefficients of the Objective,
+  such as the one a `LagBFunction` makes, is brought into the costs and the
+  weights by `add_Modification()`. OLL makes of each cost a unit soft
+  clause, and the bounds of `SATSolver` count the costs
 - `smspp_satgen`, the generator of random weighted partial MaxSAT instances
   made of groups of variables with their own hard and soft clauses, bound by
   a tunable fraction of hard linking clauses, possibly with a planted

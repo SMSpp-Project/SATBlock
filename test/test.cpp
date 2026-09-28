@@ -383,6 +383,86 @@ static void test_round_trips( void )
 
 /*--------------------------------------------------------------------------*/
 
+static void test_costs( void )
+{
+ // x0 or x1 hard, the soft clause x2 of weight 3, and the costs 2, -1, 0
+ SATBlock b;
+ load_string( b , "h 1 2 0\n3 3 0\n" );
+ std::vector< double > c = { 2 , -1 };
+ b.chg_costs( c , Block::Range( 0 , 2 ) );
+ assert( ( b.get_costs() == SATBlock::v_Weight{ 2 , -1 , 0 } ) &&
+	 b.has_costs() );
+ b.generate_abstract_constraints();
+ b.generate_objective();
+
+ // the value of every assignment, with the MILP formulation agreeing
+ for( unsigned long mask = 0 ; mask < 8 ; ++mask ) {
+  set_values( b , mask );
+  const bool x0 = mask & 1 , x1 = mask & 2 , x2 = mask & 4;
+  const double v = ( x0 ? 2 : 0 ) + ( x1 ? -1 : 0 ) + ( x2 ? 0 : 3 );
+  assert( b.get_objective_value() == v );
+  assert( objective_value( b ) == v );
+  }
+
+ // a change of the Objective, as a LagBFunction does it, is a change of the
+ // costs and of the weights of the soft clauses
+ auto lf = static_cast< LinearFunction * >(
+	     static_cast< FRealObjective * >( b.get_objective() )->get_function() );
+ lf->modify_coefficient( lf->is_active( & b.get_variables()[ 2 ] ) , 5 );
+ lf->modify_coefficient( lf->is_active( & b.get_violation( 1 ) ) , 7 );
+ assert( ( b.get_costs() == SATBlock::v_Weight{ 2 , -1 , 5 } ) &&
+	 ( b.get_weights()[ 1 ] == 7 ) );
+ // and a change of the costs is one of the Objective
+ std::vector< double > sc = { 4 };
+ b.chg_costs( sc , Block::Subset{ 1 } );
+ assert( lf->get_coefficient( lf->is_active( & b.get_variables()[ 1 ] ) ) ==
+	 4 );
+
+ // the round trips: netCDF keeps the costs, WCNF writes them as unit soft
+ // clauses, the value being the same up to the constant of the negative ones
+ const char * file = "SATBlock_costs.nc4";
+ {
+  netCDF::NcFile f( file , netCDF::NcFile::replace );
+  auto g = f.addGroup( "Block" );
+  b.serialize( g );
+  }
+ {
+  netCDF::NcFile f( file , netCDF::NcFile::read );
+  auto d = Block::new_Block( f.getGroup( "Block" ) );
+  auto s = dynamic_cast< SATBlock * >( d );
+  assert( s && ( s->get_costs() == b.get_costs() ) &&
+	  ( s->get_weights() == b.get_weights() ) );
+  delete d;
+  }
+ std::remove( file );
+
+ std::vector< double > neg = { -3 };
+ b.chg_costs( neg , Block::Range( 0 , 1 ) );
+ std::ostringstream out;
+ b.print( out , 'C' );
+ SATBlock w;
+ load_string( w , out.str() , 'W' );
+ w.generate_abstract_variables();
+ for( unsigned long mask = 0 ; mask < 8 ; ++mask ) {
+  set_values( b , mask );
+  set_values( w , mask );
+  assert( b.get_objective_value() == w.get_objective_value() - 3 );
+  }
+
+ // wrong costs
+ bool thrown = false;
+ std::vector< double > bad = { Inf< double >() };
+ try {
+  b.chg_costs( bad , Block::Range( 0 , 1 ) );
+  }
+ catch( std::invalid_argument & ) {
+  thrown = true;
+  }
+ assert( thrown );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 static void test_modifications( void )
 {
  const auto inf = Inf< double >();
@@ -428,9 +508,12 @@ static void test_modifications( void )
  assert( b.get_dynamic_variable_groups().size() == 1 );
  assert( ( ! b.get_violation( 5 ).is_fixed() ) &&
 	 b.get_violation( 6 ).is_fixed() );
- assert( ( obj->get_num_active_var() == 7 ) &&
-	 ( obj->get_coefficient( 5 ) == 6 ) &&
-	 ( obj->get_coefficient( 6 ) == 0 ) );
+ // the 7 r and the 2 x, the terms found by their variable
+ assert( ( obj->get_num_active_var() == 9 ) &&
+	 ( obj->get_coefficient( obj->is_active( & b.get_violation( 5 ) ) )
+	   == 6 ) &&
+	 ( obj->get_coefficient( obj->is_active( & b.get_violation( 6 ) ) )
+	   == 0 ) );
  assert( static_cast< const LinearFunction * >( lc.back().get_function()
 					     )->get_num_active_var() == 3 );
 
@@ -699,13 +782,20 @@ static void test_oll( void )
   SATBlock b;
   b.load( n , std::move( clauses ) , std::move( weights ) );
   b.generate_abstract_variables();
+  // half of the instances have costs of either sign on their variables
+  if( t % 2 ) {
+   std::vector< double > costs( n );
+   for( auto & c : costs )
+    c = int( std::rand() % 21 ) - 10;
+   b.chg_costs( costs , Block::Range( 0 , n ) );
+   }
 
   // the optimum by enumeration
   double best = inf;
   for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
    set_values( b , mask );
    if( b.is_feasible() )
-    best = std::min( best , b.get_violated_weight() );
+    best = std::min( best , b.get_objective_value() );
    }
 
   SATSolver * s = dynamic_cast< SATSolver * >(
@@ -721,7 +811,7 @@ static void test_oll( void )
    assert( status == Solver::kOK );
    assert( ( s->get_lb() == best ) && ( s->get_ub() == best ) );
    s->get_var_solution();
-   assert( b.is_feasible() && ( b.get_violated_weight() == best ) );
+   assert( b.is_feasible() && ( b.get_objective_value() == best ) );
    }
   b.unregister_Solvers( true );
   ++checked;
@@ -837,6 +927,7 @@ int main( int argc , char ** argv )
  test_solution();
  test_round_trips();
  test_modifications();
+ test_costs();
  test_satlib();
 #ifdef SATBLOCK_HAS_CADICAL
  solver_name = "CaDiCaLSATSolver";
