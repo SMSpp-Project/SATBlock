@@ -246,11 +246,16 @@ void SATSolver::process_outstanding_Modification( void )
       std::dynamic_pointer_cast< const BlockModAdd< FRowConstraint > >(
 									mod ) )
    continue;
+  // with a structure the Function are those of the sub-Block and of the
+  // rows of the father, while the clauses are read out of the physical
+  // representation of the father, which they do not change
+  const bool structure =
+   f_sat->get_structure_type() != SATBlock::kNoStructure;
   if( auto fmod = std::dynamic_pointer_cast< const FunctionMod >( mod ) )
-   if( objf && ( fmod->function() == objf ) )
+   if( structure || ( objf && ( fmod->function() == objf ) ) )
     continue;
   if( auto fmod = std::dynamic_pointer_cast< const FunctionModVars >( mod ) )
-   if( objf && ( fmod->function() == objf ) )
+   if( structure || ( objf && ( fmod->function() == objf ) ) )
     continue;
   if( auto smod = std::dynamic_pointer_cast< const SATBlockMod >( mod ) ) {
    if( ( smod->type() == SATBlockMod::eAddClauses ) ||

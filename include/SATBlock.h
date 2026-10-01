@@ -264,8 +264,9 @@ class SATBlock : public Block
   *
   * The structure can be changed as long as the abstract representation has
   * not been generated, the sub-Block being thrown away and built anew; after
-  * that it throws exception. The physical representation of a SATBlock with
-  * a structure cannot be changed [see chg_weights(), chg_costs() and
+  * that it throws exception. The changes of the physical representation of
+  * a SATBlock with a structure are brought into its sub-Block, save those
+  * that would change the structure itself [see chg_weights() and
   * add_clauses()]. */
 
  void set_structure( Configuration * strc = nullptr ) override;
@@ -523,8 +524,11 @@ class SATBlock : public Block
   * being in \p NWeight, +INF making a clause hard; in the abstract
   * representation the r_c of a clause becoming hard is fixed to 0, that of
   * one becoming soft is unfixed, and the coefficients of the Objective
-  * change. An exception is thrown if
-  * \p NWeight is shorter than \p rng or a weight is wrong [see load()]. */
+  * change. With a structure [see set_structure()] the weight goes to the
+  * clause in the sub-Block, or to the cost of the r of a linking clause of
+  * kRelaxation, which cannot turn hard or soft since its r only exists if it
+  * is soft (std::logic_error). An exception is thrown if \p NWeight is
+  * shorter than \p rng or a weight is wrong [see load()]. */
 
  void chg_weights( MF_dbl_sp NWeight , Range rng = INFRange ,
 		   ModParam issueMod = eNoBlck ,
@@ -544,8 +548,9 @@ class SATBlock : public Block
  /// changes the costs of the variables in the Range
  /** Changes the costs of the variables in the Range \p rng, the new ones
   * being in \p NCost, as well as their coefficients in the Objective if it
-  * has been generated. An exception is thrown if \p NCost is shorter than
-  * \p rng or a cost is not finite. */
+  * has been generated; with a structure [see set_structure()] the costs go
+  * to the variables of the sub-Block. An exception is thrown if \p NCost is
+  * shorter than \p rng or a cost is not finite. */
 
  void chg_costs( MF_dbl_sp NCost , Range rng = INFRange ,
 		 ModParam issueMod = eNoBlck , ModParam issueAMod = eNoBlck );
@@ -566,7 +571,10 @@ class SATBlock : public Block
   * abstract representation, if it has been generated, the new r_c and
   * FRowConstraint join the dynamic groups, and the new r_c the Objective.
   * The SATBlockRngdMod issued has type
-  * eAddClauses and the Range of the indices of the new clauses. */
+  * eAddClauses and the Range of the indices of the new clauses. With a
+  * structure [see set_structure()] each clause goes to the sub-Block of its
+  * group, a clause linking groups being refused (std::logic_error, with
+  * nothing added). */
 
  void add_clauses( v_Clause && clauses , v_Weight && weights = {} ,
 		   ModParam issueMod = eNoBlck ,
@@ -650,11 +658,6 @@ class SATBlock : public Block
  /// changes the weight of the i-th clause, in the abstract representation too
 
  void set_weight( unsigned int i , double w , ModParam issueAMod );
-
-/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// throws if the SATBlock has a structure, which \p name cannot change
-
- void check_no_structure( const char * name ) const;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// builds the sub-Block of the structure \p type

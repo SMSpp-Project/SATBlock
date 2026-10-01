@@ -506,15 +506,6 @@ void SATBlock::guts_of_set_structure( int type )
 
 /*--------------------------------------------------------------------------*/
 
-void SATBlock::check_no_structure( const char * name ) const
-{
- if( f_structure != kNoStructure )
-  throw( std::logic_error( std::string( "SATBlock::" ) + name +
-			   ": the physical representation of a SATBlock with "
-			   "a structure cannot change" ) );
- }
-
-/*--------------------------------------------------------------------------*/
 /*--------------------- Methods for handling Variable ----------------------*/
 /*--------------------------------------------------------------------------*/
 
@@ -976,7 +967,6 @@ void SATBlock::set_cost( unsigned int i , double c , ModParam issueAMod )
 void SATBlock::chg_costs( MF_dbl_sp NCost , Range rng ,
 			  ModParam issueMod , ModParam issueAMod )
 {
- check_no_structure( "chg_costs" );
  rng.second = std::min( rng.second , Index( f_n_var ) );
  if( rng.second <= rng.first )  // nothing to change
   return;
@@ -984,6 +974,13 @@ void SATBlock::chg_costs( MF_dbl_sp NCost , Range rng ,
  if( NCost.size() < rng.second - rng.first )
   throw( std::invalid_argument( "SATBlock::chg_costs: the span is shorter "
 				"than the Range" ) );
+
+ if( f_structure != kNoStructure ) {  // the costs are in the sub-Block
+  Subset nms( rng.second - rng.first );
+  std::iota( nms.begin() , nms.end() , rng.first );
+  chg_costs( NCost , std::move( nms ) , true , issueMod , issueAMod );
+  return;
+  }
 
  if( std::equal( NCost.begin() , NCost.begin() + ( rng.second - rng.first ) ,
 		 v_costs.begin() + rng.first ) )
@@ -1010,7 +1007,6 @@ void SATBlock::chg_costs( MF_dbl_sp NCost , Range rng ,
 void SATBlock::chg_costs( MF_dbl_sp NCost , Subset && nms , bool ordered ,
 			  ModParam issueMod , ModParam issueAMod )
 {
- check_no_structure( "chg_costs" );
  if( nms.empty() )  // nothing to change
   return;
 
@@ -1039,9 +1035,25 @@ void SATBlock::chg_costs( MF_dbl_sp NCost , Subset && nms , bool ordered ,
       return( v_costs[ p.first ] == p.second ); } ) )
   return;  // nothing changes, avoid issuing the Modification
 
- if( not_dry_run( issueMod ) )
-  for( const auto & [ i , c ] : nc )
-   set_cost( i , c , issueAMod );
+ if( not_dry_run( issueMod ) ) {
+  if( f_structure == kNoStructure )
+   for( const auto & [ i , c ] : nc )
+    set_cost( i , c , issueAMod );
+  else {
+   // each cost to the variable of the sub-Block of its group, which issues
+   // the Modification of its own representations
+   std::map< unsigned int , std::pair< Subset , std::vector< double > > > sc;
+   for( const auto & [ i , c ] : nc ) {
+    v_costs[ i ] = c;
+    auto & [ loc , val ] = sc[ v_group[ i ] ];
+    loc.push_back( v_local[ i ] );
+    val.push_back( c );
+    }
+   for( auto & [ g , lv ] : sc )
+    group_Block( g ).chg_costs( lv.second , std::move( lv.first ) , true ,
+				issueMod , issueAMod );
+   }
+  }
 
  if( issue_pmod( issueMod ) ) {
   for( Index k = 0 ; k < nc.size() ; ++k )
@@ -1116,7 +1128,6 @@ void SATBlock::add_Modification( sp_Mod mod , ChnlName chnl )
 void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
 			    ModParam issueMod , ModParam issueAMod )
 {
- check_no_structure( "chg_weights" );
  rng.second = std::min( rng.second , Index( v_clauses.size() ) );
  if( rng.second <= rng.first )  // nothing to change
   return;
@@ -1124,6 +1135,13 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
  if( NWeight.size() < rng.second - rng.first )
   throw( std::invalid_argument( "SATBlock::chg_weights: the span is shorter "
 				"than the Range" ) );
+
+ if( f_structure != kNoStructure ) {  // the weights are in the sub-Block
+  Subset nms( rng.second - rng.first );
+  std::iota( nms.begin() , nms.end() , rng.first );
+  chg_weights( NWeight , std::move( nms ) , true , issueMod , issueAMod );
+  return;
+  }
 
  if( std::equal( NWeight.begin() , NWeight.begin() +
 		 ( rng.second - rng.first ) , v_weights.begin() + rng.first ) )
@@ -1151,7 +1169,6 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
 void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
 			    ModParam issueMod , ModParam issueAMod )
 {
- check_no_structure( "chg_weights" );
  if( nms.empty() )  // nothing to change
   return;
 
@@ -1180,9 +1197,48 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
       return( v_weights[ p.first ] == p.second ); } ) )
   return;  // nothing changes, avoid issuing the Modification
 
- if( not_dry_run( issueMod ) )
+ // the r of a linking clause of kRelaxation exists only if it is soft
+ if( f_structure == kRelaxation )
   for( const auto & [ i , w ] : nw )
-   set_weight( i , w , issueAMod );
+   if( v_clause_linking[ i ] &&
+       ( is_hard( i ) != ( w == Inf< double >() ) ) )
+    throw( std::logic_error( "SATBlock::chg_weights: the linking clause " +
+			     std::to_string( i ) + " cannot turn " +
+			     ( is_hard( i ) ? "soft" : "hard" ) +
+			     " in the kRelaxation structure" ) );
+
+ if( not_dry_run( issueMod ) ) {
+  if( f_structure == kNoStructure )
+   for( const auto & [ i , w ] : nw )
+    set_weight( i , w , issueAMod );
+  else {
+   // each weight to the clause of the sub-Block it went to, or to the cost
+   // of its r if it is a linking one of kRelaxation
+   std::map< unsigned int , std::pair< Subset , std::vector< double > > >
+    sw , sc;
+   for( const auto & [ i , w ] : nw ) {
+    v_weights[ i ] = w;
+    if( ( f_structure == kRelaxation ) && v_clause_linking[ i ] ) {
+     if( w == Inf< double >() )  // hard, and it was: nothing else
+      continue;
+     auto & [ loc , val ] = sc[ v_clause_group[ i ] ];
+     loc.push_back( v_clause_local[ i ] );
+     val.push_back( w );
+     }
+    else {
+     auto & [ loc , val ] = sw[ v_clause_group[ i ] ];
+     loc.push_back( v_clause_local[ i ] );
+     val.push_back( w );
+     }
+    }
+   for( auto & [ g , lv ] : sw )
+    group_Block( g ).chg_weights( lv.second , std::move( lv.first ) , false ,
+				  issueMod , issueAMod );
+   for( auto & [ g , lv ] : sc )
+    group_Block( g ).chg_costs( lv.second , std::move( lv.first ) , false ,
+				issueMod , issueAMod );
+   }
+  }
 
  if( issue_pmod( issueMod ) ) {
   for( Index k = 0 ; k < nw.size() ; ++k )
@@ -1198,7 +1254,6 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
 void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
 			    ModParam issueMod , ModParam issueAMod )
 {
- check_no_structure( "add_clauses" );
  if( clauses.empty() )  // nothing to add
   return;
 
@@ -1231,6 +1286,58 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
   v_clauses.resize( first );
   v_weights.resize( first );
   throw;
+  }
+
+ if( f_structure != kNoStructure ) {
+  // each new clause goes to the sub-Block of its group, a linking one
+  // having nowhere to go
+  for( Index i = first ; i < v_clauses.size() ; ++i ) {
+   const auto & cl = v_clauses[ i ];
+   if( cl.empty() || is_tautology( i ) )
+    continue;
+   const auto g = v_group[ std::abs( cl[ 0 ] ) - 1 ];
+   if( std::any_of( cl.begin() , cl.end() , [ this , g ]( int lit ) {
+	return( v_group[ std::abs( lit ) - 1 ] != g ); } ) ) {
+    v_clauses.resize( first );
+    v_weights.resize( first );
+    throw( std::logic_error( "SATBlock::add_clauses: the clause " +
+			     std::to_string( i - first ) + " links groups, "
+			     "which a SATBlock with a structure cannot add" ) );
+    }
+   }
+
+  std::map< unsigned int , std::pair< v_Clause , v_Weight > > sub;
+  for( Index i = first ; i < v_clauses.size() ; ++i ) {
+   const auto & cl = v_clauses[ i ];
+   const unsigned int g = cl.empty() ? 0 : v_group[ std::abs( cl[ 0 ] ) - 1 ];
+   auto & [ scl , sw ] = sub[ g ];
+   Clause lcl;
+   if( is_tautology( i ) ) {
+    const int l = int( v_local[ std::abs( cl[ 0 ] ) - 1 ] ) + 1;
+    lcl = { l , - l };
+    }
+   else
+    for( auto lit : cl ) {
+     const int l = int( v_local[ std::abs( lit ) - 1 ] ) + 1;
+     lcl.push_back( lit > 0 ? l : - l );
+     }
+   v_clause_linking.push_back( false );
+   v_clause_group.push_back( int( g ) );
+   v_clause_local.push_back( group_Block( g ).get_number_clauses() +
+			     scl.size() );
+   scl.push_back( std::move( lcl ) );
+   sw.push_back( v_weights[ i ] );
+   }
+  for( auto & [ g , cw ] : sub )
+   group_Block( g ).add_clauses( std::move( cw.first ) ,
+				 std::move( cw.second ) , issueMod , issueAMod );
+
+  if( issue_pmod( issueMod ) )
+   add_Modification( std::make_shared< SATBlockRngdMod >( this ,
+				     SATBlockMod::eAddClauses ,
+				     Range( first , v_clauses.size() ) ) ,
+		     Observer::par2chnl( issueMod ) );
+  return;
   }
 
  // the abstract representation: the r of the new clauses, their rows and

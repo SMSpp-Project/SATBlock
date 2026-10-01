@@ -471,6 +471,55 @@ static void set_structured_values( SATBlock & b , const SATBlock & u )
  }
 
 /*--------------------------------------------------------------------------*/
+/// the same random change to u, without a structure, and to b, with one: the
+/// costs of some variables, the weights of some clauses (a linking clause of
+/// kRelaxation staying hard or soft) or a clause inside a group added
+
+static void random_change( SATBlock & u , SATBlock & b )
+{
+ const auto inf = Inf< double >();
+ const unsigned n = u.get_number_variables();
+ switch( std::rand() % 3 ) {
+  case( 0 ): {
+   std::vector< double > c( n );
+   for( auto & ci : c )
+    ci = int( std::rand() % 21 ) - 10;
+   u.chg_costs( c , Block::Range( 0 , n ) );
+   b.chg_costs( c , Block::Range( 0 , n ) );
+   break;
+   }
+  case( 1 ): {
+   Block::Subset nms;
+   std::vector< double > w;
+   for( unsigned i = 0 ; i < u.get_number_clauses() ; ++i )
+    if( std::rand() % 3 == 0 ) {
+     double wi = ( std::rand() % 3 == 0 ) ? inf : 1 + std::rand() % 20;
+     if( b.is_linking( i ) &&
+	 ( b.get_structure_type() == SATBlock::kRelaxation ) )
+      wi = u.is_hard( i ) ? inf : 1 + std::rand() % 20;
+     nms.push_back( i );
+     w.push_back( wi );
+     }
+   u.chg_weights( w , Block::Subset( nms ) );
+   b.chg_weights( w , std::move( nms ) );
+   break;
+   }
+  default: {  // a clause on the variables of the group of the first one
+   const auto & g = u.get_variable_groups();
+   const int v0 = std::rand() % n;
+   SATBlock::Clause cl{ ( v0 + 1 ) * ( std::rand() % 2 ? 1 : -1 ) };
+   for( unsigned v = 0 ; v < n ; ++v )
+    if( ( g[ v ] == g[ v0 ] ) && ( int( v ) != v0 ) &&
+	( std::rand() % 3 == 0 ) )
+     cl.push_back( int( v + 1 ) * ( std::rand() % 2 ? 1 : -1 ) );
+   const double w = ( std::rand() % 3 == 0 ) ? inf : 1 + std::rand() % 20;
+   u.add_clauses( { cl } , { w } );
+   b.add_clauses( { cl } , { w } );
+   }
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
 /// the structures against the SATBlock without them, on all the assignments
 /// of random instances, and the cases that must throw
 
@@ -515,19 +564,23 @@ static void test_structure( void )
   try { b.set_variable_groups( { 0 , 0 , 0 } ); }
   catch( std::logic_error & ) { threw = true; }
   assert( threw );
+  // the hard linking clause 1 cannot turn soft, since its r would have to
+  // appear, nor can a linking clause be added, and nothing changes
   std::vector< double > w = { 1 };
   threw = false;
-  try { b.chg_weights( w , Block::Range( 0 , 1 ) ); }
+  try { b.chg_weights( w , Block::Range( 1 , 2 ) ); }
   catch( std::logic_error & ) { threw = true; }
-  assert( threw );
+  assert( threw && b.is_hard( 1 ) );
   threw = false;
-  try { b.chg_costs( w , Block::Range( 0 , 1 ) ); }
+  try { b.add_clauses( { { 1 } , { -1 , 3 } } ); }
   catch( std::logic_error & ) { threw = true; }
-  assert( threw );
-  threw = false;
-  try { b.add_clauses( { { 1 } } ); }
-  catch( std::logic_error & ) { threw = true; }
-  assert( threw );
+  assert( threw && ( b.get_number_clauses() == 2 ) );
+  // a clause of a group and a cost go to the sub-Block
+  b.add_clauses( { { -3 } } , { 4 } );
+  b.chg_costs( w , Block::Range( 2 , 3 ) );
+  auto & sub1 = *static_cast< SATBlock * >( b.get_nested_Blocks()[ 1 ] );
+  assert( ( sub1.get_number_clauses() == 1 ) &&
+	  ( sub1.get_weights()[ 0 ] == 4 ) && ( sub1.get_costs()[ 0 ] == 1 ) );
 
   // back to no structure and to the other one, before the abstract
   // representation; after it, no more
@@ -585,9 +638,21 @@ static void test_structure( void )
    for( unsigned c = 0 ; c < b.get_number_clauses() ; ++c )
     linking += b.is_linking( c );
 
+   // the instance as it is, then after each of 3 changes, with the same
+   // changes done to a copy of u
+   SATBlock uc;
+   uc.load( n , SATBlock::v_Clause( u.get_clauses() ) ,
+	    SATBlock::v_Weight( u.get_weights() ) );
+   uc.chg_costs( u.get_costs() , Block::Range( 0 , n ) );
+   uc.set_variable_groups( std::vector< int >( u.get_variable_groups() ) );
+   uc.generate_abstract_constraints();
+   uc.generate_objective();
+   for( unsigned round = 0 ; round < 4 ; ++round ) {
+   if( round )
+    random_change( uc , b );
    for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
-    set_values( u , mask );
-    set_structured_values( b , u );
+    set_values( uc , mask );
+    set_structured_values( b , uc );
 
     bool rows = true;
     double obj = objective_value( b );
@@ -602,18 +667,19 @@ static void test_structure( void )
      row.compute();
      rows = row.feasible() && rows;
      }
-    assert( rows == u.is_feasible() );
-    assert( b.is_feasible() == u.is_feasible() );
-    assert( b.get_objective_value() == u.get_objective_value() );
-    if( u.is_feasible() )
-     assert( obj == u.get_objective_value() );
+    assert( rows == uc.is_feasible() );
+    assert( b.is_feasible() == uc.is_feasible() );
+    assert( b.get_objective_value() == uc.get_objective_value() );
+    if( uc.is_feasible() )
+     assert( obj == uc.get_objective_value() );
+    }
     }
    ++checked;
    }
   }
  std::cout << "SATBlock: both structures equal to the SATBlock on all the "
-	   << "assignments of " << checked << " cases (" << linking
-	   << " linking clauses)" << std::endl;
+	   << "assignments of " << checked << " cases, 3 changes each ("
+	   << linking << " linking clauses)" << std::endl;
  }
 
 /*--------------------------------------------------------------------------*/
@@ -1077,28 +1143,50 @@ static void test_oll_structure( void )
     best = std::min( best , u.get_objective_value() );
    }
 
+  const double best0 = best;
   for( int type : { SATBlock::kRelaxation , SATBlock::kDecomposition } ) {
    SATBlock b;
    load_structured( b , u , type );
    b.generate_abstract_constraints();
+   best = best0;
 
+   SATBlock uc;
+   uc.load( n , SATBlock::v_Clause( u.get_clauses() ) ,
+	    SATBlock::v_Weight( u.get_weights() ) );
+   uc.chg_costs( u.get_costs() , Block::Range( 0 , n ) );
+   uc.set_variable_groups( std::vector< int >( u.get_variable_groups() ) );
+   uc.generate_abstract_variables();
+
+   // the instance, then 3 changes, the same SATSolver reoptimizing
    auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
    s->set_par( SATSolver::intMaxSAT , 1 );
    b.register_Solver( s );
-   const int status = s->compute();
-   if( best == inf )
-    assert( status == Solver::kInfeasible );
-   else {
-    assert( ( status == Solver::kOK ) && ( s->get_ub() == best ) );
-    s->get_var_solution();
-    assert( b.is_feasible() && ( b.get_objective_value() == best ) );
+   for( unsigned round = 0 ; round < 4 ; ++round ) {
+    if( round ) {
+     random_change( uc , b );
+     best = inf;
+     for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
+      set_values( uc , mask );
+      if( uc.is_feasible() )
+       best = std::min( best , uc.get_objective_value() );
+      }
+     }
+    const int status = s->compute();
+    if( best == inf )
+     assert( status == Solver::kInfeasible );
+    else {
+     assert( ( status == Solver::kOK ) && ( s->get_ub() == best ) );
+     s->get_var_solution();
+     assert( b.is_feasible() && ( b.get_objective_value() == best ) );
+     }
     }
    b.unregister_Solvers( true );
    ++checked;
    }
   }
  std::cout << solver_name << ": OLL optimal on " << checked
-	   << " random instances with a structure" << std::endl;
+	   << " random instances with a structure, 3 changes each"
+	   << std::endl;
  }
 
 /*--------------------------------------------------------------------------*/
