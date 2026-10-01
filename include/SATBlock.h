@@ -28,6 +28,7 @@
 /*--------------------------------------------------------------------------*/
 
 #include <list>
+#include <tuple>
 #include <vector>
 
 #include "Block.h"
@@ -112,6 +113,14 @@ namespace SMSpp_di_unipi_it
  * on a SATBlock as they are; the SAT solvers [see SATSolver.h] read instead
  * the physical representation.
  *
+ * The variables may be dealt out to groups, which is part of the physical
+ * representation [see set_variable_groups()]: the groups are what the
+ * structure of the SATBlock is made of [see set_structure()], with one
+ * sub-SATBlock per group and, in the father, the rows that tie them, which a
+ * Lagrangian decomposition dualizes. The physical representation of the
+ * father is still the whole instance, so that a SAT solver reads it as it
+ * is, while the x and the r are those of the sub-SATBlock [see var()].
+ *
  * A SATBlock can be load()-ed from the DIMACS CNF and WCNF formats, and
  * deserialize() and serialize() it out of and into a netCDF group [see
  * serialize()]. */
@@ -135,6 +144,19 @@ class SATBlock : public Block
 
  using c_v_Weight = const v_Weight;       ///< a const vector of weights
 
+/*--------------------------------------------------------------------------*/
+ /// the structures the SATBlock can be given out of its groups
+ /** The structures the SATBlock can be given out of the groups of its
+  * variables [see set_structure()]: a clause whose variables are all in one
+  * group belongs to that group, the others *link* the groups, and the two
+  * structures differ in where the linking clauses go. */
+
+ enum structure_type {
+  kNoStructure = 0 ,  ///< no sub-Block, the SATBlock holds everything
+  kRelaxation = 1 ,   ///< the linking clauses are rows of the father
+  kDecomposition = 2  ///< each linking clause goes to a group, with copies
+  };
+
 /*------------------------------ CONSTRUCTOR -------------------------------*/
  /// constructor of SATBlock, taking a pointer to the father Block
  /** Constructor of SATBlock. It accepts a pointer to the father Block
@@ -143,7 +165,8 @@ class SATBlock : public Block
   * factory). The SATBlock is empty: no variable and no clause. */
 
  explicit SATBlock( Block * father = nullptr )
-  : Block( father ) , f_n_var( 0 ) , AR( 0 ) {}
+  : Block( father ) , f_n_var( 0 ) , f_structure( kNoStructure ) , AR( 0 )
+ {}
 
 /*------------------------------- DESTRUCTOR -------------------------------*/
  /// destructor of SATBlock
@@ -197,6 +220,55 @@ class SATBlock : public Block
   * SATBlock [see serialize()]. */
 
  void deserialize( const netCDF::NcGroup & group ) override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// sets the groups of the variables, part of the physical representation
+ /** Sets the group of each variable, \p groups having one non-negative
+  * entry per variable, or none to say that there are no groups; the groups
+  * are numbered from 0 to the largest entry, and a group may be empty. The
+  * groups are what set_structure() builds the sub-Block out of, hence they
+  * can only be changed as long as the SATBlock has no structure. */
+
+ void set_variable_groups( std::vector< int > && groups );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// sets the structure of the SATBlock out of the groups of its variables
+ /** Sets the structure of the SATBlock, given by the int value of \p strc if
+  * it is a SimpleConfiguration< int >, or, if \p strc is nullptr, of the
+  * f_structure_Configuration of the BlockConfig; if neither is there, the
+  * structure is left as it is. The values are those of structure_type, and
+  * a structure other than kNoStructure needs the groups of the variables
+  * [see set_variable_groups()]. With a structure there is one sub-SATBlock
+  * per group, holding the variables of the group, with their costs, and the
+  * clauses of the group, with their weights; a clause is *linking* if its
+  * variables are in more than one group, and then:
+  *
+  * - kRelaxation: the linking clause is a row of the father, the same as in
+  *   the abstract representation of a SATBlock [see the class], over the x of
+  *   the sub-Block; the r of a soft linking clause is a variable of its own of
+  *   the sub-Block of the group of its first literal, with the weight of the
+  *   clause as cost and in no clause of the sub-Block. A Lagrangian
+  *   relaxation of the rows of the father relaxes these clauses.
+  *
+  * - kDecomposition: the linking clause goes to the group having most of its
+  *   variables (the smallest one in a tie), whose sub-Block gets a copy of
+  *   each variable of another group in it, with cost 0; the rows of the
+  *   father are the equalities between each copy and its original. A
+  *   Lagrangian relaxation of these is the Lagrangian decomposition, whose
+  *   bound is the optimum over the intersection of the convex hulls of the
+  *   sub-Block, hence at least as good as the one of kRelaxation.
+  *
+  * A tautology goes to the group of its first literal, as the clause made of
+  * that literal and its negation. The father has no Variable and an
+  * Objective with no terms, all of them being in the sub-Block.
+  *
+  * The structure can be changed as long as the abstract representation has
+  * not been generated, the sub-Block being thrown away and built anew; after
+  * that it throws exception. The physical representation of a SATBlock with
+  * a structure cannot be changed [see chg_weights(), chg_costs() and
+  * add_clauses()]. */
+
+ void set_structure( Configuration * strc = nullptr ) override;
 
 /*--------------------- Methods for handling Variable ----------------------*/
  /// generates the ColVariable x and r of the SATBlock
@@ -258,6 +330,25 @@ class SATBlock : public Block
  [[nodiscard]] c_v_Weight & get_costs( void ) const { return( v_costs ); }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the groups of the variables, empty if there are none
+
+ [[nodiscard]] const std::vector< int > & get_variable_groups( void ) const {
+  return( v_group );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the structure of the SATBlock, a structure_type value
+
+ [[nodiscard]] int get_structure_type( void ) const { return( f_structure ); }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns true if the i-th clause links groups in the current structure
+
+ [[nodiscard]] bool is_linking( unsigned int i ) const {
+  return( ( f_structure != kNoStructure ) && v_clause_linking[ i ] );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns true if some variable has a nonzero cost
 
  [[nodiscard]] bool has_costs( void ) const;
@@ -268,7 +359,30 @@ class SATBlock : public Block
  [[nodiscard]] bool is_tautology( unsigned int i ) const;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the ColVariable x of the variables, empty if not generated yet
+ /// returns true if the ColVariable x have been generated
+
+ [[nodiscard]] bool has_variables( void ) const { return( AR & HasVar ); }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the ColVariable x of the i-th variable, which must exist
+ /** Returns the ColVariable x of the i-th variable, which is one of the
+  * SATBlock without a structure and one of a sub-Block with a structure [see
+  * set_structure()]; the ColVariable must have been generated. */
+
+ [[nodiscard]] ColVariable & var( unsigned int i );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the ColVariable x of the i-th variable, which must exist
+
+ [[nodiscard]] const ColVariable & var( unsigned int i ) const {
+  return( const_cast< SATBlock * >( this )->var( i ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the ColVariable x of the SATBlock, empty if not generated yet
+ /** Returns the ColVariable x of the SATBlock, empty if they have not been
+  * generated yet and with a structure, the x being then those of the
+  * sub-Block [see var()]. */
 
  [[nodiscard]] const std::vector< ColVariable > & get_variables( void ) const {
   return( v_x );
@@ -283,6 +397,9 @@ class SATBlock : public Block
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the ColVariable r of the clause i, which must exist
+ /** Returns the ColVariable r of the clause i, which is one of a sub-Block
+  * with a structure; a hard linking clause of the kRelaxation structure has
+  * none, and an exception is thrown. */
 
  [[nodiscard]] const ColVariable & get_violation( unsigned int i ) const;
 
@@ -295,6 +412,9 @@ class SATBlock : public Block
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the FRowConstraint of the clause i, which must exist
+ /** Returns the FRowConstraint of the clause i, which is one of a sub-Block
+  * with a structure, except for a linking clause of the kRelaxation
+  * structure, whose row is one of the father. */
 
  [[nodiscard]] FRowConstraint & get_clause_constraint( unsigned int i );
 
@@ -305,6 +425,17 @@ class SATBlock : public Block
 						       void ) const {
   return( v_c );
   }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the rows of the father that tie the sub-Block, if any
+ /** Returns the rows of the father that tie the sub-Block [see
+  * set_structure()], empty without a structure or if the Constraint have not
+  * been generated: with kRelaxation those of the linking clauses, in their
+  * order, and with kDecomposition the equalities, each one having the copy
+  * with coefficient 1 and the original with coefficient -1. */
+
+ [[nodiscard]] const std::vector< FRowConstraint > &
+  get_linking_constraints( void ) const { return( v_link_c ); }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the dynamic FRowConstraint, those of the clauses added later
@@ -462,7 +593,14 @@ class SATBlock : public Block
   *   clauses are hard;
   *
   * - the double variable "Costs", over the dimension "NumberVariables", the
-  *   costs of the variables; it is absent if they are all 0. */
+  *   costs of the variables; it is absent if they are all 0;
+  *
+  * - the int variable "VariableGroups", over the dimension
+  *   "NumberVariables", the groups of the variables [see
+  *   set_variable_groups()]; it is absent if there are none.
+  *
+  * The structure is not part of it, being given by the BlockConfig [see
+  * set_structure()]. */
 
  void serialize( netCDF::NcGroup & group ) const override;
 
@@ -514,6 +652,35 @@ class SATBlock : public Block
  void set_weight( unsigned int i , double w , ModParam issueAMod );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// throws if the SATBlock has a structure, which \p name cannot change
+
+ void check_no_structure( const char * name ) const;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// builds the sub-Block of the structure \p type
+ /** Builds the sub-Block of the structure \p type out of the groups of the
+  * variables, throwing away the ones there were [see set_structure()]. */
+
+ void guts_of_set_structure( int type );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns the sub-SATBlock of the group g
+
+ SATBlock & group_Block( unsigned int g ) const {
+  return( *static_cast< SATBlock * >( v_Block[ g ] ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// sets the row of the father for the k-th linking clause or copy
+
+ void set_father_row( FRowConstraint & c , unsigned int k );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// throws away the sub-Block and the structure, back to kNoStructure
+
+ void guts_of_reset_structure( void );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// empties the SATBlock, abstract representation included
 
  void guts_of_destructor( void );
@@ -539,6 +706,38 @@ class SATBlock : public Block
  std::list< FRowConstraint > l_c;    ///< the dynamic rows of the clauses
 
  FRealObjective f_obj;     ///< the weight of the violated soft clauses
+
+ std::vector< int > v_group;  ///< the group of each variable, if any
+
+ int f_structure;          ///< the structure, a structure_type value
+
+ /// the index of each variable in the sub-Block of its group
+ std::vector< unsigned int > v_local;
+
+ /// true for the clauses that link groups, in the current structure
+ std::vector< bool > v_clause_linking;
+
+ /// the group of each clause: the one it belongs to, the one it goes to if
+ /// linking with kDecomposition, the one having its r if linking and soft
+ /// with kRelaxation, -1 if linking and hard with kRelaxation
+ std::vector< int > v_clause_group;
+
+ /// the index in the sub-Block of the group of each clause: of the clause,
+ /// or of its r if linking and soft with kRelaxation
+ std::vector< unsigned int > v_clause_local;
+
+ /// the rows of the father: the linking clauses with kRelaxation, in their
+ /// order, and the equalities between the copies and the originals with
+ /// kDecomposition, in the order of v_copies
+ std::vector< FRowConstraint > v_link_c;
+
+ /// with kRelaxation the linking clauses, in the order of v_link_c
+ std::vector< unsigned int > v_link_clause;
+
+ /// with kDecomposition the copies: the group, the variable copied and the
+ /// index of the copy in the sub-Block of the group
+ std::vector< std::tuple< unsigned int , unsigned int , unsigned int > >
+  v_copies;
 
  unsigned char AR;     ///< bit-wise coded: what abstract is there
 

@@ -14,7 +14,8 @@
  * 2022 on (the DIMACS CNF one if there are no soft clauses), whose comment
  * lines record how it was generated, or as a SATBlock in a netCDF file if the
  * name of the output file ends in .nc4, with the same record in the
- * attribute "satgen" of the file.
+ * attribute "satgen" of the file and the groups of the variables in the
+ * SATBlock [see SATBlock::set_variable_groups()].
  *
  * The random numbers come from std::mt19937_64 with bounded draws done here,
  * not by the std:: distributions, so that the same seed gives the same
@@ -275,6 +276,10 @@ int main( int argc , char ** argv )
 
  SATBlock b;
  b.load( k * n , std::move( clauses ) , std::move( weights ) );
+ std::vector< int > groups( k * n );
+ for( unsigned int i = 0 ; i < groups.size() ; ++i )
+  groups[ i ] = int( i / n );
+ b.set_variable_groups( std::move( groups ) );
 
  const std::string name( argv[ optind ] );
  if( ( name.size() > 4 ) && ( name.substr( name.size() - 4 ) == ".nc4" ) ) {

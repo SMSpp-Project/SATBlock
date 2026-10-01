@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- the variables of a `SATBlock` may be dealt out to groups, part of its
+  physical representation (`set_variable_groups()`, `"VariableGroups"` in
+  netCDF), which `smspp_satgen` writes in the `.nc4` files, and
+  `set_structure()` builds out of them one sub-`SATBlock` per group with,
+  in the father, either the clauses linking the groups (`kRelaxation`) or
+  the equalities between the copies of the variables a linking clause
+  takes into another group and their originals (`kDecomposition`, the
+  Lagrangian decomposition); the father keeps the whole instance as its
+  physical representation, so that a `SATSolver` solves it as it is,
+  writing the solution into the x of the sub-Block (`var()`)
 - OLL is incremental: the relaxation variables, the totalizers and the cores
   it finds stay with the SAT solver, with the clauses it has learnt, and at
   the beginning of each `compute()` the cores are relaxed again with the

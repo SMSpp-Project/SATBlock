@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <sstream>
 
@@ -295,7 +296,222 @@ void SATBlock::deserialize( const netCDF::NcGroup & group )
 				 "finite" ) );
   }
 
+ auto g = group.getVar( "VariableGroups" );
+ if( ( ! g.isNull() ) && f_n_var ) {
+  if( g.getDimCount() != 1 || g.getDim( 0 ).getSize() != f_n_var )
+   throw( std::invalid_argument( "SATBlock::deserialize: VariableGroups "
+				 "must have one element per variable" ) );
+  std::vector< int > groups( f_n_var );
+  g.getVar( groups.data() );
+  set_variable_groups( std::move( groups ) );
+  }
+
  Block::deserialize( group );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::set_variable_groups( std::vector< int > && groups )
+{
+ if( f_structure != kNoStructure )
+  throw( std::logic_error( "SATBlock::set_variable_groups: the groups of a "
+			   "SATBlock with a structure cannot change" ) );
+
+ if( ( ! groups.empty() ) && ( groups.size() != f_n_var ) )
+  throw( std::invalid_argument( "SATBlock::set_variable_groups: " +
+				std::to_string( groups.size() ) +
+				" groups for " + std::to_string( f_n_var ) +
+				" variables" ) );
+
+ if( std::any_of( groups.begin() , groups.end() ,
+		  []( int g ) { return( g < 0 ); } ) )
+  throw( std::invalid_argument( "SATBlock::set_variable_groups: a group is "
+				"negative" ) );
+
+ v_group = std::move( groups );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::set_structure( Configuration * strc )
+{
+ if( ( ! strc ) && f_BlockConfig )
+  strc = f_BlockConfig->f_structure_Configuration;
+
+ if( ! strc )  // nobody is choosing: the structure is left as it is
+  return;
+
+ auto ci = dynamic_cast< SimpleConfiguration< int > * >( strc );
+ if( ! ci )
+  throw( std::invalid_argument( "SATBlock::set_structure: the structure of "
+				"a SATBlock is a SimpleConfiguration< int >" ) );
+
+ const int type = ci->value();
+ if( ( type != kNoStructure ) && ( type != kRelaxation ) &&
+     ( type != kDecomposition ) )
+  throw( std::invalid_argument( "SATBlock::set_structure: unknown "
+				"structure " + std::to_string( type ) ) );
+
+ guts_of_set_structure( type );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::guts_of_reset_structure( void )
+{
+ for( auto sub : v_Block )
+  delete sub;
+ v_Block.clear();
+
+ v_local.clear();
+ v_clause_linking.clear();
+ v_clause_group.clear();
+ v_clause_local.clear();
+ v_link_clause.clear();
+ v_copies.clear();
+ f_structure = kNoStructure;
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::guts_of_set_structure( int type )
+{
+ static const std::string _prfx = "SATBlock::set_structure: ";
+
+ if( AR )
+  throw( std::logic_error( _prfx + "the abstract representation has been "
+			   "generated" ) );
+
+ guts_of_reset_structure();
+ if( type == kNoStructure )
+  return;
+
+ if( v_group.empty() )
+  throw( std::logic_error( _prfx + "the variables have no groups" ) );
+
+ const unsigned int P = unsigned( *std::max_element( v_group.begin() ,
+						     v_group.end() ) ) + 1;
+
+ // the variables of each group, numbered in their order, with their costs
+ std::vector< unsigned int > n_var( P , 0 );
+ std::vector< v_Weight > costs( P );
+ v_local.resize( f_n_var );
+ for( unsigned int i = 0 ; i < f_n_var ; ++i ) {
+  const auto g = v_group[ i ];
+  v_local[ i ] = n_var[ g ]++;
+  costs[ g ].push_back( v_costs[ i ] );
+  }
+
+ std::vector< v_Clause > clauses( P );
+ std::vector< v_Weight > weights( P );
+ v_clause_linking.assign( v_clauses.size() , false );
+ v_clause_group.assign( v_clauses.size() , -1 );
+ v_clause_local.assign( v_clauses.size() , Inf< unsigned int >() );
+
+ // the literal of the original variable v in the sub-Block of its group
+ auto local = [ this ]( int lit ) {
+  const int l = int( v_local[ std::abs( lit ) - 1 ] ) + 1;
+  return( lit > 0 ? l : - l );
+  };
+
+ // the clause goes to the sub-Block of the group g
+ auto put = [ & ]( unsigned int i , unsigned int g , Clause && cl ) {
+  v_clause_group[ i ] = int( g );
+  v_clause_local[ i ] = clauses[ g ].size();
+  clauses[ g ].push_back( std::move( cl ) );
+  weights[ g ].push_back( v_weights[ i ] );
+  };
+
+ std::map< std::pair< unsigned int , unsigned int > , unsigned int > copy;
+
+ for( unsigned int i = 0 ; i < v_clauses.size() ; ++i ) {
+  const auto & cl = v_clauses[ i ];
+
+  if( cl.empty() ) {  // never satisfied, wherever it goes
+   put( i , 0 , Clause() );
+   continue;
+   }
+
+  const unsigned int g0 = v_group[ std::abs( cl[ 0 ] ) - 1 ];
+  if( is_tautology( i ) ) {  // always satisfied: the first literal will do
+   put( i , g0 , Clause{ local( cl[ 0 ] ) , - local( cl[ 0 ] ) } );
+   continue;
+   }
+
+  // how many literals in each group
+  std::map< unsigned int , unsigned int > count;
+  for( auto lit : cl )
+   ++count[ v_group[ std::abs( lit ) - 1 ] ];
+
+  if( count.size() == 1 ) {  // a clause of the group g0
+   Clause lcl;
+   lcl.reserve( cl.size() );
+   for( auto lit : cl )
+    lcl.push_back( local( lit ) );
+   put( i , g0 , std::move( lcl ) );
+   continue;
+   }
+
+  v_clause_linking[ i ] = true;
+
+  if( type == kRelaxation ) {
+   // a row of the father; the r of a soft one in the group of the first
+   // literal, as a variable of its own whose cost is the weight
+   v_link_clause.push_back( i );
+   if( ! is_hard( i ) ) {
+    v_clause_group[ i ] = int( g0 );
+    v_clause_local[ i ] = n_var[ g0 ]++;
+    costs[ g0 ].push_back( v_weights[ i ] );
+    }
+   continue;
+   }
+
+  // kDecomposition: to the group having most of its literals, the smallest
+  // one in a tie, with copies of the variables of the other groups
+  unsigned int g = count.begin()->first;
+  for( const auto & [ h , k ] : count )
+   if( k > count[ g ] )
+    g = h;
+
+  Clause lcl;
+  lcl.reserve( cl.size() );
+  for( auto lit : cl ) {
+   const unsigned int v = std::abs( lit ) - 1;
+   if( unsigned( v_group[ v ] ) == g ) {
+    lcl.push_back( local( lit ) );
+    continue;
+    }
+   auto it = copy.find( { g , v } );
+   if( it == copy.end() ) {
+    it = copy.emplace( std::make_pair( g , v ) , n_var[ g ]++ ).first;
+    costs[ g ].push_back( 0 );
+    v_copies.emplace_back( g , v , it->second );
+    }
+   const int l = int( it->second ) + 1;
+   lcl.push_back( lit > 0 ? l : - l );
+   }
+  put( i , g , std::move( lcl ) );
+  }
+
+ for( unsigned int g = 0 ; g < P ; ++g ) {
+  auto sub = new SATBlock( this );
+  sub->load( n_var[ g ] , std::move( clauses[ g ] ) ,
+	     std::move( weights[ g ] ) );
+  sub->v_costs = std::move( costs[ g ] );
+  add_nested_Block( sub );
+  }
+
+ f_structure = type;
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::check_no_structure( const char * name ) const
+{
+ if( f_structure != kNoStructure )
+  throw( std::logic_error( std::string( "SATBlock::" ) + name +
+			   ": the physical representation of a SATBlock with "
+			   "a structure cannot change" ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -318,6 +534,13 @@ void SATBlock::generate_abstract_variables( Configuration * stvv )
  if( AR & HasVar )  // the Variable are there already
   return;           // nothing to do
 
+ if( f_structure != kNoStructure ) {  // all of them are in the sub-Block
+  for( auto sub : v_Block )
+   sub->generate_abstract_variables();
+  AR |= HasVar;
+  return;
+  }
+
  v_x = std::vector< ColVariable >( f_n_var );
  for( auto & x : v_x )
   x.set_type( ColVariable::kBinary , eNoMod );
@@ -335,8 +558,33 @@ void SATBlock::generate_abstract_variables( Configuration * stvv )
 
 /*--------------------------------------------------------------------------*/
 
+ColVariable & SATBlock::var( unsigned int i )
+{
+ if( f_structure == kNoStructure ) {
+  if( i >= v_x.size() )
+   throw( std::logic_error( "SATBlock::var: the ColVariable have not been "
+			    "generated" ) );
+  return( v_x[ i ] );
+  }
+
+ return( group_Block( v_group[ i ] ).var( v_local[ i ] ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 ColVariable & SATBlock::violation( unsigned int i )
 {
+ if( f_structure != kNoStructure ) {
+  const int g = v_clause_group[ i ];
+  if( g < 0 )
+   throw( std::logic_error( "SATBlock::get_violation: the hard linking "
+			    "clause " + std::to_string( i ) + " has no r" ) );
+  auto & sub = group_Block( g );
+  if( ( f_structure == kRelaxation ) && v_clause_linking[ i ] )
+   return( sub.var( v_clause_local[ i ] ) );
+  return( sub.violation( v_clause_local[ i ] ) );
+  }
+
  if( i < v_r.size() )
   return( v_r[ i ] );
  return( *std::next( l_r.begin() , i - v_r.size() ) );
@@ -376,12 +624,58 @@ void SATBlock::set_clause_constraint( FRowConstraint & c , unsigned int i ,
 
 /*--------------------------------------------------------------------------*/
 
+void SATBlock::set_father_row( FRowConstraint & c , unsigned int k )
+{
+ LinearFunction::v_coeff_pair coeffs;
+
+ if( f_structure == kDecomposition ) {  // the copy equals the original
+  const auto [ g , v , l ] = v_copies[ k ];
+  coeffs.emplace_back( & group_Block( g ).var( l ) , 1 );
+  coeffs.emplace_back( & var( v ) , -1 );
+  c.set_function( new LinearFunction( std::move( coeffs ) , 0 ) , eNoMod );
+  c.set_both( 0 , eNoMod );
+  return;
+  }
+
+ // kRelaxation: the row of the linking clause, as in the abstract
+ // representation of a SATBlock, with the r of a soft one if any
+ const auto i = v_link_clause[ k ];
+ double lhs = 1;
+ coeffs.reserve( v_clauses[ i ].size() + 1 );
+ for( auto lit : v_clauses[ i ] ) {
+  coeffs.emplace_back( & var( std::abs( lit ) - 1 ) , lit > 0 ? 1 : -1 );
+  if( lit < 0 )
+   --lhs;
+  }
+ if( ! is_hard( i ) )
+  coeffs.emplace_back( & violation( i ) , 1 );
+
+ c.set_function( new LinearFunction( std::move( coeffs ) , 0 ) , eNoMod );
+ c.set_lhs( lhs , eNoMod );
+ c.set_rhs( Inf< double >() , eNoMod );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 void SATBlock::generate_abstract_constraints( Configuration * stcc )
 {
  if( AR & HasCns )  // the Constraint are there already
   return;           // nothing to do
 
  generate_abstract_variables();
+
+ if( f_structure != kNoStructure ) {  // the rows that tie the sub-Block
+  for( auto sub : v_Block )
+   sub->generate_abstract_constraints();
+  v_link_c = std::vector< FRowConstraint >( f_structure == kRelaxation ?
+					    v_link_clause.size() :
+					    v_copies.size() );
+  for( unsigned int k = 0 ; k < v_link_c.size() ; ++k )
+   set_father_row( v_link_c[ k ] , k );
+  add_static_constraint( v_link_c , "linking" );
+  AR |= HasCns;
+  return;
+  }
 
  // the clauses whose r is static have a static row too, the others a
  // dynamic one
@@ -404,6 +698,15 @@ void SATBlock::generate_abstract_constraints( Configuration * stcc )
 
 FRowConstraint & SATBlock::get_clause_constraint( unsigned int i )
 {
+ if( f_structure != kNoStructure ) {
+  if( ( f_structure == kRelaxation ) && v_clause_linking[ i ] )
+   return( v_link_c[ std::lower_bound( v_link_clause.begin() ,
+				       v_link_clause.end() , i ) -
+		     v_link_clause.begin() ] );
+  return( group_Block( v_clause_group[ i ] ).get_clause_constraint(
+						      v_clause_local[ i ] ) );
+  }
+
  if( i < v_c.size() )
   return( v_c[ i ] );
  return( *std::next( l_c.begin() , i - v_c.size() ) );
@@ -419,6 +722,17 @@ void SATBlock::generate_objective( Configuration * objc )
   return;           // nothing to do
 
  generate_abstract_variables();
+
+ if( f_structure != kNoStructure ) {  // all the terms are in the sub-Block
+  for( auto sub : v_Block )
+   sub->generate_objective();
+  f_obj.set_function( new LinearFunction( LinearFunction::v_coeff_pair() ,
+					  0 ) , eNoMod );
+  f_obj.set_sense( Objective::eMin , eNoMod );
+  set_objective( & f_obj , eNoMod );
+  AR |= HasObj;
+  return;
+  }
 
  // the i-th term is the r of the i-th clause, 0 if the clause is hard, and
  // the terms of the x, with their costs, come after them
@@ -486,7 +800,7 @@ bool SATBlock::is_tautology( unsigned int i ) const
 
 bool SATBlock::is_feasible( bool useabstract , Configuration * fsbc )
 {
- if( v_x.size() != f_n_var )
+ if( ! has_variables() )
   throw( std::logic_error( "SATBlock::is_feasible: the ColVariable have "
 			   "not been generated" ) );
 
@@ -494,7 +808,7 @@ bool SATBlock::is_feasible( bool useabstract , Configuration * fsbc )
   if( is_hard( i ) &&
       std::none_of( v_clauses[ i ].begin() , v_clauses[ i ].end() ,
 		    [ this ]( int lit ) {
-       return( ( v_x[ std::abs( lit ) - 1 ].get_value() > 0.5 ) ==
+       return( ( var( std::abs( lit ) - 1 ).get_value() > 0.5 ) ==
 		( lit > 0 ) ); } ) )
    return( false );
 
@@ -505,7 +819,7 @@ bool SATBlock::is_feasible( bool useabstract , Configuration * fsbc )
 
 double SATBlock::get_violated_weight( void ) const
 {
- if( v_x.size() != f_n_var )
+ if( ! has_variables() )
   throw( std::logic_error( "SATBlock::get_violated_weight: the "
 			   "ColVariable have not been generated" ) );
 
@@ -514,7 +828,7 @@ double SATBlock::get_violated_weight( void ) const
   if( ( ! is_hard( i ) ) &&
       std::none_of( v_clauses[ i ].begin() , v_clauses[ i ].end() ,
 		    [ this ]( int lit ) {
-       return( ( v_x[ std::abs( lit ) - 1 ].get_value() > 0.5 ) ==
+       return( ( var( std::abs( lit ) - 1 ).get_value() > 0.5 ) ==
 		( lit > 0 ) ); } ) )
    sum += v_weights[ i ];
 
@@ -527,7 +841,7 @@ double SATBlock::get_objective_value( void ) const
 {
  double value = get_violated_weight();
  for( unsigned int i = 0 ; i < f_n_var ; ++i )
-  if( v_x[ i ].get_value() > 0.5 )
+  if( var( i ).get_value() > 0.5 )
    value += v_costs[ i ];
  return( value );
  }
@@ -553,6 +867,9 @@ void SATBlock::serialize( netCDF::NcGroup & group ) const
  auto nv = group.addDim( "NumberVariables" , f_n_var );
  if( has_costs() )
   group.addVar( "Costs" , netCDF::NcDouble() , nv ).putVar( v_costs.data() );
+ if( ! v_group.empty() )
+  group.addVar( "VariableGroups" , netCDF::NcInt() , nv ).putVar(
+							    v_group.data() );
 
  if( v_clauses.empty() )
   return;
@@ -659,6 +976,7 @@ void SATBlock::set_cost( unsigned int i , double c , ModParam issueAMod )
 void SATBlock::chg_costs( MF_dbl_sp NCost , Range rng ,
 			  ModParam issueMod , ModParam issueAMod )
 {
+ check_no_structure( "chg_costs" );
  rng.second = std::min( rng.second , Index( f_n_var ) );
  if( rng.second <= rng.first )  // nothing to change
   return;
@@ -692,6 +1010,7 @@ void SATBlock::chg_costs( MF_dbl_sp NCost , Range rng ,
 void SATBlock::chg_costs( MF_dbl_sp NCost , Subset && nms , bool ordered ,
 			  ModParam issueMod , ModParam issueAMod )
 {
+ check_no_structure( "chg_costs" );
  if( nms.empty() )  // nothing to change
   return;
 
@@ -797,6 +1116,7 @@ void SATBlock::add_Modification( sp_Mod mod , ChnlName chnl )
 void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
 			    ModParam issueMod , ModParam issueAMod )
 {
+ check_no_structure( "chg_weights" );
  rng.second = std::min( rng.second , Index( v_clauses.size() ) );
  if( rng.second <= rng.first )  // nothing to change
   return;
@@ -831,6 +1151,7 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
 void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
 			    ModParam issueMod , ModParam issueAMod )
 {
+ check_no_structure( "chg_weights" );
  if( nms.empty() )  // nothing to change
   return;
 
@@ -877,6 +1198,7 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
 void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
 			    ModParam issueMod , ModParam issueAMod )
 {
+ check_no_structure( "add_clauses" );
  if( clauses.empty() )  // nothing to add
   return;
 
@@ -958,6 +1280,8 @@ void SATBlock::guts_of_destructor( void )
   c.clear();
  for( auto & c : l_c )
   c.clear();
+ for( auto & c : v_link_c )
+  c.clear();
  f_obj.clear();
 
  reset_objective();
@@ -967,9 +1291,12 @@ void SATBlock::guts_of_destructor( void )
  reset_static_variables();
  l_c.clear();
  v_c.clear();
+ v_link_c.clear();
  l_r.clear();
  v_r.clear();
  v_x.clear();
+ guts_of_reset_structure();
+ v_group.clear();
 
  v_clauses.clear();
  v_weights.clear();
@@ -1000,14 +1327,15 @@ Change * SATBlockChange::apply( Block * block , bool doUndo ,
 				+ " variables" ) );
 
  sat->generate_abstract_variables();
- auto & x = sat->get_variables();
+ auto x = [ sat ]( Block::Index i ) -> ColVariable & {
+  return( sat->var( i ) ); };
 
  // all checked first, so that nothing is changed if anything is wrong
  for( auto i : f_nms ) {
-  if( i >= x.size() )
+  if( i >= sat->get_number_variables() )
    throw( std::invalid_argument( "SATBlockChange::apply: variable " +
 				 std::to_string( i ) + " out of range" ) );
-  if( x[ i ].is_fixed() == ( f_type == eFixX ) )
+  if( x( i ).is_fixed() == ( f_type == eFixX ) )
    throw( std::invalid_argument( "SATBlockChange::apply: variable " +
 				 std::to_string( i ) + ( f_type == eFixX ?
 							 " already fixed" :
@@ -1022,7 +1350,7 @@ Change * SATBlockChange::apply( Block * block , bool doUndo ,
    std::vector< double > old;
    old.reserve( f_nms.size() );
    for( auto i : f_nms )
-    old.push_back( x[ i ].get_value() );
+    old.push_back( x( i ).get_value() );
    undo = new SATBlockChange( eFixX , Block::Subset( f_nms ) ,
 			      std::move( old ) );
    }
@@ -1031,7 +1359,7 @@ Change * SATBlockChange::apply( Block * block , bool doUndo ,
  // the values go before the fixing, which set_value() of a fixed Variable
  // would not allow
  for( std::size_t k = 0 ; k < f_nms.size() ; ++k ) {
-  auto & xi = x[ f_nms[ k ] ];
+  auto & xi = x( f_nms[ k ] );
   if( f_type == eFixX ) {
    xi.set_value( f_values[ k ] > 0.5 ? 1 : 0 );
    xi.is_fixed( true , issueAMod );

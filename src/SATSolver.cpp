@@ -30,6 +30,27 @@
 using namespace SMSpp_di_unipi_it;
 
 /*--------------------------------------------------------------------------*/
+
+namespace {
+
+// the ColVariable x of a SATBlock, its own or those of its sub-Block, as a
+// vector: empty if they have not been generated
+template< class S , class X >
+struct XView {
+ S & sat;
+ unsigned int size( void ) const {
+  return( sat.has_variables() ? sat.get_number_variables() : 0 );
+  }
+ X & operator[]( unsigned int i ) const { return( sat.var( i ) ); }
+ };
+
+using c_XView = XView< const SATBlock , const ColVariable >;
+
+using m_XView = XView< SATBlock , ColVariable >;
+
+}  // end( namespace )
+
+/*--------------------------------------------------------------------------*/
 /*------------------------- OTHER INITIALIZATIONS --------------------------*/
 /*--------------------------------------------------------------------------*/
 
@@ -340,7 +361,7 @@ int SATSolver::compute( bool changedvars )
   sync_clauses();
 
  // the fixed ColVariable x, if they exist, are assumptions
- const auto & x = std::as_const( *f_sat ).get_variables();
+ const c_XView x{ *f_sat };
  std::vector< int > assumptions;
  for( unsigned int i = 0 ; i < x.size() ; ++i )
   if( x[ i ].is_fixed() )
@@ -775,15 +796,18 @@ void SATSolver::get_var_solution( Configuration * solc )
   throw( std::logic_error( "SATSolver::get_var_solution: no solution" ) );
 
  f_sat->generate_abstract_variables();
- auto & x = f_sat->get_variables();
+ const m_XView x{ *f_sat };
  for( unsigned int i = 0 ; i < x.size() ; ++i )
   x[ i ].set_value( ( v_model.empty() ? sat_value( int( i + 1 ) )
 		                      : bool( v_model[ i ] ) ) ? 1 : 0 );
 
- // r is 1 for the soft clauses the solution violates, 0 for all the others
+ // r is 1 for the soft clauses the solution violates and 0 for the other
+ // soft ones, that of a hard clause being fixed to 0
  const auto & clauses = f_sat->get_clauses();
  for( unsigned int i = 0 ; i < clauses.size() ; ++i ) {
-  const bool violated = ( ! f_sat->is_hard( i ) ) &&
+  if( f_sat->is_hard( i ) )  // its r, if any, is fixed to 0
+   continue;
+  const bool violated =
    std::none_of( clauses[ i ].begin() , clauses[ i ].end() ,
 		 [ & x ]( int lit ) {
     return( ( x[ std::abs( lit ) - 1 ].get_value() > 0.5 ) == ( lit > 0 ) );
@@ -807,7 +831,7 @@ bool SATSolver::is_failed( unsigned int i ) const
 std::vector< Change * > SATSolver::branch( void )
 {
  f_sat->generate_abstract_variables();
- const auto & x = std::as_const( *f_sat ).get_variables();
+ const c_XView x{ *f_sat };
  const auto n = x.size();
 
  auto children = []( unsigned int var , double first ) {
@@ -905,7 +929,7 @@ bool SATResidualGraph::build( const SATSolver & solver , int features )
  var.clear();
 
  const auto & sat = *solver.get_SATBlock();
- const auto & x = sat.get_variables();
+ const c_XView x{ sat };
  const auto & clauses = sat.get_clauses();
 
  // the unfixed variables, numbered from 0 in their order
