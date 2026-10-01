@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   representation and in the `Objective`; a `SATSolver` gives each of them
   the next variable of its SAT solver, so that what OLL has made stays
 
+- the parameter `intMaxSATWCE` of `SATSolver`: OLL extracts the cores
+  weight-aware, the assumptions of the totalizers it makes being left out
+  of the SAT solver until the other ones hold together
+
 - the parameter `intMaxSATRestart` of `SATSolver`: a `compute()` starting
   when OLL has given the SAT solver more than that many times as many
   clauses as in the first `compute()` with it makes a new SAT solver

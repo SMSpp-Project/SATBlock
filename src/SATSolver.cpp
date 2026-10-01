@@ -91,6 +91,9 @@ void SATSolver::set_par( idx_type par , int value )
   case( intMaxSATRestart ):
    Restart = std::max( value , 0 );
    break;
+  case( intMaxSATWCE ):
+   WCE = ( value != 0 );
+   break;
   case( intMaxIter ):
    MaxIter = std::max( value , 0 );
    break;
@@ -108,6 +111,7 @@ int SATSolver::get_dflt_int_par( idx_type par ) const
   case( intMaxSATTrim ):      return( 5 );
   case( intMaxSATMinBudget ): return( 1000 );
   case( intMaxSATRestart ):   return( 0 );
+  case( intMaxSATWCE ):       return( 0 );
   default:                    return( Solver::get_dflt_int_par( par ) );
   }
  }
@@ -121,6 +125,7 @@ int SATSolver::get_int_par( idx_type par ) const
   case( intMaxSATTrim ):      return( CoreTrim );
   case( intMaxSATMinBudget ): return( CoreMinBudget );
   case( intMaxSATRestart ):   return( Restart );
+  case( intMaxSATWCE ):       return( WCE ? 1 : 0 );
   case( intMaxIter ):         return( MaxIter );
   default:                    return( Solver::get_int_par( par ) );
   }
@@ -138,6 +143,8 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
   return( intMaxSATMinBudget );
  if( name == "intMaxSATRestart" )
   return( intMaxSATRestart );
+ if( name == "intMaxSATWCE" )
+  return( intMaxSATWCE );
  return( Solver::int_par_str2idx( name ) );
  }
 
@@ -145,8 +152,9 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
 
 const std::string & SATSolver::int_par_idx2str( idx_type idx ) const
 {
- static const std::array< std::string , 4 > names = { "intMaxSAT" ,
-		"intMaxSATTrim" , "intMaxSATMinBudget" , "intMaxSATRestart" };
+ static const std::array< std::string , 5 > names = { "intMaxSAT" ,
+		"intMaxSATTrim" , "intMaxSATMinBudget" , "intMaxSATRestart" ,
+		"intMaxSATWCE" };
  if( ( idx >= intMaxSAT ) && ( idx < intLastAlgParSATS ) )
   return( names[ idx - intMaxSAT ] );
  return( Solver::int_par_idx2str( idx ) );
@@ -606,11 +614,16 @@ int SATSolver::oll( const std::vector< int > & fixed )
   };
  std::unordered_map< int , Soft > soft;
  std::vector< int > order;  // the assumptions, in the order they are made
+ // with intMaxSATWCE, the assumptions of the totalizers made since the last
+ // solution, left out of the SAT solver until the others hold together
+ std::unordered_set< int > delayed;
  auto add_soft = [ & ]( int lit , double w , int root , std::size_t bnd ) {
   auto it = soft.find( lit );
   if( it == soft.end() ) {
    soft.emplace( lit , Soft{ w , root , bnd } );
    order.push_back( lit );
+   if( WCE && ( root >= 0 ) )
+    delayed.insert( lit );
    }
   else
    it->second.w += w;
@@ -767,7 +780,8 @@ int SATSolver::oll( const std::vector< int > & fixed )
    }
   as = fixed;
   for( auto lit : order )
-   if( ( soft[ lit ].w > 0 ) && ( soft[ lit ].w >= tau ) )
+   if( ( soft[ lit ].w > 0 ) && ( soft[ lit ].w >= tau ) &&
+       ( ! delayed.count( lit ) ) )
     as.push_back( lit );
 
   const int res = sat_solve( as );
@@ -779,6 +793,11 @@ int SATSolver::oll( const std::vector< int > & fixed )
     v_model.resize( f_sat->get_number_variables() );
     for( unsigned int i = 0 ; i < v_model.size() ; ++i )
      v_model[ i ] = sat_value( v_ivar[ i ] ) ? 1 : 0;
+    }
+   // the assumptions left out come in, before the threshold goes down
+   if( ! delayed.empty() ) {
+    delayed.clear();
+    continue;
     }
    if( ! lower_level() )  // f_lb == f_ub, up to the rounding of the weights
     return( 10 );

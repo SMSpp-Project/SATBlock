@@ -1244,10 +1244,12 @@ static void test_oll_incremental( void )
 
   // a third of the instances never makes a new SAT solver, the others do
   // as soon as OLL has given it more clauses than in the first compute(),
-  // or more than twice as many
+  // or more than twice as many; half of each third extracts the cores
+  // weight-aware
   auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
   s->set_par( SATSolver::intMaxSAT , 1 );
   s->set_par( SATSolver::intMaxSATRestart , int( t % 3 ) );
+  s->set_par( SATSolver::intMaxSATWCE , int( ( t / 3 ) % 2 ) );
   b.register_Solver( s );
 
   std::vector< int > fixed( n , -1 );  // the value of a fixed x, -1 if not
@@ -1554,7 +1556,7 @@ static void test_oll_mse( void )
 {
  std::ifstream opt( "../data/wcnf/mse24-small/optima.txt" );
  assert( opt );
- unsigned optimal = 0 , stopped = 0;
+ unsigned optimal = 0 , stopped = 0 , wce_optimal = 0;
  std::string line;
  while( std::getline( opt , line ) ) {
   if( line.empty() || ( line[ 0 ] == '#' ) )
@@ -1568,27 +1570,32 @@ static void test_oll_mse( void )
   assert( in );
   SATBlock b;
   b.load( in , 'W' );
-  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
-  s->set_par( SATSolver::intMaxSAT , 1 );
-  s->set_par( Solver::dblMaxTime , 2.0 );
-  b.register_Solver( s );
-  const int status = s->compute();
-  if( status == Solver::kOK ) {
-   assert( ( s->get_lb() == z ) && ( s->get_ub() == z ) );
-   s->get_var_solution();
-   assert( b.is_feasible() && ( b.get_violated_weight() == z ) );
-   ++optimal;
+  // the cores extracted as they come, then weight-aware
+  for( int wce = 0 ; wce < 2 ; ++wce ) {
+   auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+   s->set_par( SATSolver::intMaxSAT , 1 );
+   s->set_par( SATSolver::intMaxSATWCE , wce );
+   s->set_par( Solver::dblMaxTime , 2.0 );
+   b.register_Solver( s );
+   const int status = s->compute();
+   if( status == Solver::kOK ) {
+    assert( ( s->get_lb() == z ) && ( s->get_ub() == z ) );
+    s->get_var_solution();
+    assert( b.is_feasible() && ( b.get_violated_weight() == z ) );
+    ++( wce ? wce_optimal : optimal );
+    }
+   else {
+    assert( status == Solver::kStopTime );
+    assert( ( s->get_lb() <= z ) && ( z <= s->get_ub() ) );
+    if( ! wce )
+     ++stopped;
+    }
+   b.unregister_Solvers( true );
    }
-  else {
-   assert( status == Solver::kStopTime );
-   assert( ( s->get_lb() <= z ) && ( z <= s->get_ub() ) );
-   ++stopped;
-   }
-  b.unregister_Solvers( true );
   }
  std::cout << solver_name << ": OLL optimal on " << optimal
 	   << " MaxSAT Evaluation instances, stopped by the time on "
-	   << stopped << std::endl;
+	   << stopped << ", with WCE optimal on " << wce_optimal << std::endl;
  }
 
 /*--------------------------------------------------------------------------*/

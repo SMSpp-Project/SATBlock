@@ -33,6 +33,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "ChangeSolver.h"
@@ -127,6 +128,14 @@ namespace SMSpp_di_unipi_it
  * turn and the rest given to the SAT solver with a budget of
  * intMaxSATMinBudget conflicts, the assumption staying out if the rest is
  * found unsatisfiable within the budget.
+ *
+ * With intMaxSATWCE set to 1 the cores are extracted *weight-aware* (Berg,
+ * Jarvisalo, CP 2017): the weights of a core are lowered at once, but the
+ * new assumptions of its totalizer are left out of the SAT solver until
+ * the other ones hold together, so that several disjoint cores are found
+ * before the totalizers make the formula grow; when they hold, those
+ * assumptions come in, and the threshold of the stratification goes down
+ * only when all of them are there.
  *
  * After kOK get_lb() and get_ub() are both the optimal value. After
  * kStopTime get_lb() is the lower bound reached and get_ub() the value of
@@ -308,6 +317,12 @@ class SATSolver : public Solver , public RelaxationSolver
 				* many clauses as in the first compute() with
 				* it makes a new SAT solver [see the class]; 0
 				* (the default) means never. */
+  intMaxSATWCE ,               ///< 1 to extract the cores weight-aware
+                               /**< With 1, the assumptions of the
+				* totalizers that OLL makes are left out of
+				* the SAT solver until the others hold
+				* together [see the class]; 0 (the default)
+				* gives them at once. */
   intLastAlgParSATS            ///< first new int parameter of derived classes
   };
 
@@ -690,6 +705,8 @@ class SATSolver : public Solver , public RelaxationSolver
  int CoreMinBudget = 1000;     ///< the parameter intMaxSATMinBudget
 
  int Restart = 0;              ///< the parameter intMaxSATRestart
+
+ bool WCE = false;             ///< the parameter intMaxSATWCE
 
  int MaxIter = Inf< int >();   ///< the parameter intMaxIter
 
