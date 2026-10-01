@@ -37,9 +37,18 @@ library built if Torch is found, which reads a policy learned by Graph-Q-SAT.
 `CaDiCaLSATSolver` and `MiniSATSolver` are the ones for CaDiCaL and MiniSat,
 each built if its SAT solver is found.
 
+The variables of a `SATBlock` may be dealt out to groups, out of which it
+can be given the structure of a Lagrangian relaxation, with the clauses that
+link the groups in the father, or of a Lagrangian decomposition, with copies
+of the variables a linking clause takes into another group; either way there
+is one sub-`SATBlock` per group, and the `LagrangianDualSolver` relaxes the
+rows of the father.
+
 `smspp_satgen` generates random weighted partial MaxSAT instances made of
 groups of clauses bound by a tunable fraction of linking clauses, which is the
-structure the decompositions are for.
+structure the decompositions are for, and `smspp_satpart` deals the variables
+of any instance out to groups, the communities of its variable incidence
+graph.
 
 
 ## Getting started

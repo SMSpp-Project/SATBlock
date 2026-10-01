@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `smspp_satpart`, which deals the variables of a CNF, WCNF or netCDF
+  instance out to groups, the communities of its variable incidence graph
+  found by the Louvain method, merged down to the number of `-k` if given,
+  and writes it as a netCDF `SATBlock` with them
+
 - the variables of a `SATBlock` may be dealt out to groups, part of its
   physical representation (`set_variable_groups()`, `"VariableGroups"` in
   netCDF), which `smspp_satgen` writes in the `.nc4` files, and
