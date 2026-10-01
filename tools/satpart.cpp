@@ -142,7 +142,8 @@ static Graph incidence_graph( const SATBlock & b , unsigned int maxlen )
 /// one level of the Louvain method: moves the vertices of g among the
 /// communities in comm, true if any has moved
 
-static bool louvain_level( const Graph & g , std::vector< unsigned int > & comm ,
+static bool louvain_level( const Graph & g ,
+			   std::vector< unsigned int > & comm ,
 			   std::mt19937_64 & gen )
 {
  const unsigned int n = g.size();
@@ -217,7 +218,8 @@ static unsigned int renumber( std::vector< unsigned int > & comm )
 /*--------------------------------------------------------------------------*/
 /// the graph of the communities: one vertex each, the weights summed
 
-static Graph aggregate( const Graph & g , const std::vector< unsigned int > & comm ,
+static Graph aggregate( const Graph & g ,
+			const std::vector< unsigned int > & comm ,
 			unsigned int nc )
 {
  std::vector< std::map< unsigned int , double > > adj( nc );
