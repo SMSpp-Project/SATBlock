@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <numeric>
 #include <utility>
 
 #include "SATSolver.h"
@@ -87,6 +88,9 @@ void SATSolver::set_par( idx_type par , int value )
   case( intMaxSATMinBudget ):
    CoreMinBudget = std::max( value , 0 );
    break;
+  case( intMaxSATRestart ):
+   Restart = std::max( value , 0 );
+   break;
   case( intMaxIter ):
    MaxIter = std::max( value , 0 );
    break;
@@ -103,6 +107,7 @@ int SATSolver::get_dflt_int_par( idx_type par ) const
   case( intMaxSAT ):          return( 0 );
   case( intMaxSATTrim ):      return( 5 );
   case( intMaxSATMinBudget ): return( 1000 );
+  case( intMaxSATRestart ):   return( 0 );
   default:                    return( Solver::get_dflt_int_par( par ) );
   }
  }
@@ -115,6 +120,7 @@ int SATSolver::get_int_par( idx_type par ) const
   case( intMaxSAT ):          return( MaxSATAlg );
   case( intMaxSATTrim ):      return( CoreTrim );
   case( intMaxSATMinBudget ): return( CoreMinBudget );
+  case( intMaxSATRestart ):   return( Restart );
   case( intMaxIter ):         return( MaxIter );
   default:                    return( Solver::get_int_par( par ) );
   }
@@ -130,6 +136,8 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
   return( intMaxSATTrim );
  if( name == "intMaxSATMinBudget" )
   return( intMaxSATMinBudget );
+ if( name == "intMaxSATRestart" )
+  return( intMaxSATRestart );
  return( Solver::int_par_str2idx( name ) );
  }
 
@@ -137,8 +145,8 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
 
 const std::string & SATSolver::int_par_idx2str( idx_type idx ) const
 {
- static const std::array< std::string , 3 > names = { "intMaxSAT" ,
-				"intMaxSATTrim" , "intMaxSATMinBudget" };
+ static const std::array< std::string , 4 > names = { "intMaxSAT" ,
+		"intMaxSATTrim" , "intMaxSATMinBudget" , "intMaxSATRestart" };
  if( ( idx >= intMaxSAT ) && ( idx < intLastAlgParSATS ) )
   return( names[ idx - intMaxSAT ] );
  return( Solver::int_par_idx2str( idx ) );
@@ -259,6 +267,7 @@ void SATSolver::process_outstanding_Modification( void )
     continue;
   if( auto smod = std::dynamic_pointer_cast< const SATBlockMod >( mod ) ) {
    if( ( smod->type() == SATBlockMod::eAddClauses ) ||
+      ( smod->type() == SATBlockMod::eAddVariables ) ||
        ( smod->type() == SATBlockMod::eChgCost ) ||
        ( smod->type() == SATBlockMod::eChgWeight ) )
     continue;
@@ -300,6 +309,12 @@ void SATSolver::load_clauses( void )
  sat_new();
  f_has_sat = true;
 
+ const int n = int( f_sat->get_number_variables() );
+ v_ivar.resize( n );
+ std::iota( v_ivar.begin() , v_ivar.end() , 1 );
+ v_uvar.resize( n + 1 );
+ std::iota( v_uvar.begin() , v_uvar.end() , 0 );
+
  v_hard = hard_clauses();
  const auto & clauses = f_sat->get_clauses();
  for( unsigned int i = 0 ; i < clauses.size() ; ++i )
@@ -310,9 +325,32 @@ void SATSolver::load_clauses( void )
  v_soft.clear();
  v_tot.clear();
  v_cores.clear();
- f_next_var = int( f_sat->get_number_variables() );
+ f_oll_clauses = 0;
+ f_oll_first = 0;
+ f_next_var = n;
 
  f_reload = false;
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATSolver::block_clause( const std::vector< int > & clause )
+{
+ std::vector< int > sc( clause.size() );
+ std::transform( clause.begin() , clause.end() , sc.begin() ,
+		 [ this ]( int lit ) { return( sat_lit( lit ) ); } );
+ sat_clause( sc );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATSolver::sync_variables( void )
+{
+ for( auto i = v_ivar.size() ; i < f_sat->get_number_variables() ; ++i ) {
+  v_ivar.push_back( ++f_next_var );
+  v_uvar.resize( f_next_var + 1 , 0 );
+  v_uvar[ f_next_var ] = int( i + 1 );
+  }
  }
 
 /*--------------------------------------------------------------------------*/
@@ -335,7 +373,7 @@ void SATSolver::sync_clauses( void )
  const auto & clauses = f_sat->get_clauses();
  for( unsigned int i = 0 ; i < hard.size() ; ++i )
   if( hard[ i ] && ( ( i >= v_hard.size() ) || ( ! v_hard[ i ] ) ) )
-   sat_clause( clauses[ i ] );
+   block_clause( clauses[ i ] );
  v_hard = hard;
  }
 
@@ -360,18 +398,28 @@ int SATSolver::compute( bool changedvars )
  f_start = std::chrono::steady_clock::now();
 
  process_outstanding_Modification();
+ // what OLL has made is thrown away if it has grown too much since the
+ // first compute() with this SAT solver
+ if( ( Restart > 0 ) && ( f_oll_first > 0 ) &&
+     ( f_oll_clauses > std::size_t( Restart ) * f_oll_first ) )
+  f_reload = true;
  if( f_reload || ( ! f_has_sat ) )
   load_clauses();
- else
+ else {
+  sync_variables();
   sync_clauses();
+  }
 
  // the fixed ColVariable x, if they exist, are assumptions
  const c_XView x{ *f_sat };
  std::vector< int > assumptions;
+ v_fixed_idx.clear();
  for( unsigned int i = 0 ; i < x.size() ; ++i )
-  if( x[ i ].is_fixed() )
-   assumptions.push_back( ( x[ i ].get_value() > 0.5 ) ? int( i + 1 )
-			                     : - int( i + 1 ) );
+  if( x[ i ].is_fixed() ) {
+   assumptions.push_back( sat_lit( ( x[ i ].get_value() > 0.5 ) ?
+				   int( i + 1 ) : - int( i + 1 ) ) );
+   v_fixed_idx.push_back( i );
+   }
 
  v_failed.assign( f_sat->get_number_variables() , 0 );
  f_ub = Inf< double >();
@@ -379,8 +427,11 @@ int SATSolver::compute( bool changedvars )
  f_iter_stop = false;
 
  int res;
- if( MaxSATAlg == 1 )
+ if( MaxSATAlg == 1 ) {
   res = oll( assumptions );
+  if( f_oll_first == 0 )
+   f_oll_first = f_oll_clauses;
+  }
  else {
   res = sat_solve( assumptions );
   // the weights are not negative, the costs may be
@@ -390,8 +441,8 @@ int SATSolver::compute( bool changedvars )
   f_lb = ( res == 10 ? lb : ( res == 20 ? Inf< double >() :
 			      - Inf< double >() ) );
   if( res == 20 )
-   for( auto lit : assumptions )
-    v_failed[ std::abs( lit ) - 1 ] = sat_failed( lit ) ? 1 : 0;
+   for( std::size_t k = 0 ; k < assumptions.size() ; ++k )
+    v_failed[ v_fixed_idx[ k ] ] = sat_failed( assumptions[ k ] ) ? 1 : 0;
   }
 
  switch( res ) {
@@ -409,10 +460,11 @@ int SATSolver::compute( bool changedvars )
     if( ( ! f_sat->is_hard( i ) ) &&
 	std::none_of( clauses[ i ].begin() , clauses[ i ].end() ,
 		      [ this ]( int lit ) {
-	 return( sat_value( std::abs( lit ) ) == ( lit > 0 ) ); } ) )
+	 return( sat_value( v_ivar[ std::abs( lit ) - 1 ] ) == ( lit > 0 ) );
+	 } ) )
      f_ub += w[ i ];
    for( unsigned int i = 0 ; i < c.size() ; ++i )
-    if( ( c[ i ] != 0 ) && sat_value( int( i + 1 ) ) )
+    if( ( c[ i ] != 0 ) && sat_value( v_ivar[ i ] ) )
      f_ub += c[ i ];
    break;
    }
@@ -487,7 +539,7 @@ void SATSolver::tot_extend( int node , std::size_t k )
    if( j )
     clause.push_back( - b[ j - 1 ] );
    clause.push_back( o[ s - 1 ] );
-   sat_clause( clause );
+   oll_clause( clause );
    }
  }
 
@@ -581,11 +633,14 @@ int SATSolver::oll( const std::vector< int > & fixed )
    }
   if( ! v_soft[ i ] ) {
    if( clauses[ i ].size() == 1 )
-    v_soft[ i ] = clauses[ i ][ 0 ];
+    v_soft[ i ] = sat_lit( clauses[ i ][ 0 ] );
    else {
-    auto clause = clauses[ i ];
+    std::vector< int > clause( clauses[ i ].size() );
+    std::transform( clauses[ i ].begin() , clauses[ i ].end() ,
+		    clause.begin() , [ this ]( int lit ) {
+     return( sat_lit( lit ) ); } );
     clause.push_back( ++f_next_var );
-    sat_clause( clause );
+    oll_clause( clause );
     v_soft[ i ] = - f_next_var;
     }
    }
@@ -598,10 +653,10 @@ int SATSolver::oll( const std::vector< int > & fixed )
  const auto & costs = f_sat->get_costs();
  for( unsigned int i = 0 ; i < costs.size() ; ++i )
   if( costs[ i ] > 0 )
-   add_soft( - int( i + 1 ) , costs[ i ] , -1 , 0 );
+   add_soft( - v_ivar[ i ] , costs[ i ] , -1 , 0 );
   else
    if( costs[ i ] < 0 ) {
-    add_soft( int( i + 1 ) , - costs[ i ] , -1 , 0 );
+    add_soft( v_ivar[ i ] , - costs[ i ] , -1 , 0 );
     f_lb += costs[ i ];
     }
 
@@ -687,10 +742,11 @@ int SATSolver::oll( const std::vector< int > & fixed )
    if( ( ! f_sat->is_hard( i ) ) &&
        std::none_of( clauses[ i ].begin() , clauses[ i ].end() ,
 		     [ this ]( int lit ) {
-	return( sat_value( std::abs( lit ) ) == ( lit > 0 ) ); } ) )
+	return( sat_value( v_ivar[ std::abs( lit ) - 1 ] ) == ( lit > 0 ) );
+	} ) )
     cost += weights[ i ];
   for( unsigned int i = 0 ; i < costs.size() ; ++i )
-   if( ( costs[ i ] != 0 ) && sat_value( int( i + 1 ) ) )
+   if( ( costs[ i ] != 0 ) && sat_value( v_ivar[ i ] ) )
     cost += costs[ i ];
   return( cost );
   };
@@ -722,7 +778,7 @@ int SATSolver::oll( const std::vector< int > & fixed )
     f_ub = cost;
     v_model.resize( f_sat->get_number_variables() );
     for( unsigned int i = 0 ; i < v_model.size() ; ++i )
-     v_model[ i ] = sat_value( int( i + 1 ) ) ? 1 : 0;
+     v_model[ i ] = sat_value( v_ivar[ i ] ) ? 1 : 0;
     }
    if( ! lower_level() )  // f_lb == f_ub, up to the rounding of the weights
     return( 10 );
@@ -747,8 +803,8 @@ int SATSolver::oll( const std::vector< int > & fixed )
    // clauses OLL adds being implied by the hard ones or only defining new
    // variables
    f_lb = Inf< double >();
-   for( auto lit : fixed )
-    v_failed[ std::abs( lit ) - 1 ] = sat_failed( lit ) ? 1 : 0;
+   for( std::size_t k = 0 ; k < fixed.size() ; ++k )
+    v_failed[ v_fixed_idx[ k ] ] = sat_failed( fixed[ k ] ) ? 1 : 0;
    return( 20 );
    }
 
@@ -769,7 +825,7 @@ int SATSolver::oll( const std::vector< int > & fixed )
    }
   else
    if( cond.empty() )
-    sat_clause( { - core[ 0 ] } );
+    oll_clause( { - core[ 0 ] } );
 
   v_cores.push_back( { core , cond , root } );
   relax( core , root );
@@ -803,7 +859,7 @@ void SATSolver::get_var_solution( Configuration * solc )
  f_sat->generate_abstract_variables();
  const m_XView x{ *f_sat };
  for( unsigned int i = 0 ; i < x.size() ; ++i )
-  x[ i ].set_value( ( v_model.empty() ? sat_value( int( i + 1 ) )
+  x[ i ].set_value( ( v_model.empty() ? sat_value( v_ivar[ i ] )
 		                      : bool( v_model[ i ] ) ) ? 1 : 0 );
 
  // r is 1 for the soft clauses the solution violates and 0 for the other
@@ -885,7 +941,7 @@ std::vector< double > SATSolver::core_scores( void ) const
  // the clause of each relaxation variable
  std::unordered_map< int , unsigned int > relax_clause;
  for( unsigned int i = 0 ; i < v_soft.size() ; ++i )
-  if( std::abs( v_soft[ i ] ) > int( n ) )
+  if( v_soft[ i ] && ( block_var( std::abs( v_soft[ i ] ) ) < 0 ) )
    relax_clause[ std::abs( v_soft[ i ] ) ] = i;
 
  // the soft assumptions of the cores each x is in, a relaxation variable
@@ -895,8 +951,8 @@ std::vector< double > SATSolver::core_scores( void ) const
  for( const auto & core : v_cores )
   for( auto lit : core.lits ) {
    const auto v = std::abs( lit );
-   if( v <= int( n ) )
-    score[ v - 1 ] += 1;
+   if( const auto bv = block_var( v ) ; bv >= 0 )
+    score[ bv ] += 1;
    else {
     const auto it = relax_clause.find( v );
     if( it != relax_clause.end() ) {

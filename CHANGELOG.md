@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SATBlock::add_variables()`, which adds variables of cost 0 after the
+  existing ones, their x in the dynamic group `"added x"` of the abstract
+  representation and in the `Objective`; a `SATSolver` gives each of them
+  the next variable of its SAT solver, so that what OLL has made stays
+
+- the parameter `intMaxSATRestart` of `SATSolver`: a `compute()` starting
+  when OLL has given the SAT solver more than that many times as many
+  clauses as in the first `compute()` with it makes a new SAT solver
+
 - `SATResidualGraph::eMaxSATIndex`, the rows of `eMaxSAT` with the index of
   the variable over the number of variables, which tells apart the
   variables the cores score the same as the rule of the cores does, and

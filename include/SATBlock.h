@@ -29,6 +29,7 @@
 
 #include <list>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 #include "Block.h"
@@ -106,8 +107,10 @@ namespace SMSpp_di_unipi_it
  * and of the weights, which the SATBlock brings into its physical
  * representation [see add_Modification()].
  *
- * The r_c and the rows of the clauses added after the abstract
- * representation has been generated [see add_clauses()] are in the dynamic
+ * The x of the variables added after the abstract representation has been
+ * generated [see add_variables()] are in the dynamic group "added x", and
+ * the r_c and the rows of the clauses added after it [see add_clauses()]
+ * are in the dynamic
  * groups "added r" and "added clauses", in the order they are added. The
  * :MILPSolver, and the decompositions such as the Lagrangian one, then work
  * on a SATBlock as they are; the SAT solvers [see SATSolver.h] read instead
@@ -380,17 +383,18 @@ class SATBlock : public Block
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the ColVariable x of the SATBlock, empty if not generated yet
- /** Returns the ColVariable x of the SATBlock, empty if they have not been
-  * generated yet and with a structure, the x being then those of the
-  * sub-Block [see var()]. */
+ /// returns the static ColVariable x, empty if not generated yet
+ /** Returns the static ColVariable x of the SATBlock, empty if they have
+  * not been generated yet and with a structure, the x being then those of
+  * the sub-Block; those of the variables added after they have been
+  * generated are not there [see add_variables() and var()]. */
 
  [[nodiscard]] const std::vector< ColVariable > & get_variables( void ) const {
   return( v_x );
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the ColVariable x of the variables, e.g., to fix some of them
+ /// returns the static ColVariable x, e.g., to fix some of them
 
  [[nodiscard]] std::vector< ColVariable > & get_variables( void ) {
   return( v_x );
@@ -580,6 +584,20 @@ class SATBlock : public Block
 		   ModParam issueMod = eNoBlck ,
 		   ModParam issueAMod = eNoBlck );
 
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// adds k variables after the existing ones, of cost 0
+ /** Adds \p k variables after the existing ones, i.e., the variables n to
+  * n + k - 1, with cost 0 and in no clause, which the clauses added after
+  * can then use [see add_clauses()]. In the abstract representation, if it
+  * has been generated, their x join the dynamic group "added x" and, with
+  * coefficient 0, the Objective. The SATBlockRngdMod issued has type
+  * eAddVariables and the Range of the indices of the new variables. A
+  * SATBlock with a structure refuses them (std::logic_error), a variable
+  * having to be in a group [see set_variable_groups()]. */
+
+ void add_variables( unsigned int k , ModParam issueMod = eNoBlck ,
+		     ModParam issueAMod = eNoBlck );
+
 /** @} ---------------------------------------------------------------------*/
 
 /*------------------------- Methods for serializing ------------------------*/
@@ -704,6 +722,14 @@ class SATBlock : public Block
 
  std::list< ColVariable > l_r;       ///< the dynamic ColVariable r
 
+ std::list< ColVariable > l_x;       ///< the dynamic ColVariable x
+
+ /// the ColVariable x in l_x, in the order of their variables
+ std::vector< ColVariable * > v_added_x;
+
+ /// the index of the variable of each ColVariable in l_x
+ std::unordered_map< const Variable * , unsigned int > m_added_x;
+
  std::vector< FRowConstraint > v_c;  ///< the static rows of the clauses
 
  std::list< FRowConstraint > l_c;    ///< the dynamic rows of the clauses
@@ -784,7 +810,8 @@ class SATBlockMod : public Modification
  enum SATBlock_mod_type {
   eChgWeight = 0 ,  ///< the weights of some clauses have changed
   eAddClauses ,     ///< some clauses have been added
-  eChgCost          ///< the costs of some variables have changed
+  eChgCost ,        ///< the costs of some variables have changed
+  eAddVariables     ///< some variables have been added
   };
 
 /*------------------------ CONSTRUCTOR & DESTRUCTOR ------------------------*/
@@ -821,6 +848,7 @@ class SATBlockMod : public Modification
    case( eChgWeight ):  output << "change weights "; break;
    case( eAddClauses ): output << "add clauses "; break;
    case( eChgCost ):    output << "change costs "; break;
+   case( eAddVariables ): output << "add variables "; break;
    default:             output << "type " << f_type << " ";
    }
   }

@@ -149,7 +149,15 @@ namespace SMSpp_di_unipi_it
  * as the subproblems of a Lagrangian decomposition with different
  * multipliers, cheaper to solve than each of them from scratch. A core
  * with a fixed variable in its reason is kept only for the compute() whose
- * fixed variables include those, and it never becomes a clause.
+ * fixed variables include those, and it never becomes a clause. A
+ * variable added to the SATBlock [see SATBlock::add_variables()] gets the
+ * next variable of the SAT solver, so that what OLL has made stays. What is
+ * kept also weighs on each call of the SAT solver, the totalizers of all
+ * the cores found so far being there whether they are of use or not: with
+ * intMaxSATRestart set to k > 0, a compute() starting when OLL has given
+ * the SAT solver more than k times as many clauses as in the first
+ * compute() with it makes a new SAT solver, which starts from the hard
+ * clauses only.
  *
  * A SATSolver is also a RelaxationSolver [see ChangeSolver.h], so that the
  * BranchAndXSolver can enumerate on it. A node is a set of fixed x, which
@@ -294,6 +302,12 @@ class SATSolver : public Solver , public RelaxationSolver
 				* the SAT solver that minimizes a core of OLL
 				* by deletion [see the class]; 0 means no
 				* minimization, the default is 1000. */
+  intMaxSATRestart ,           ///< growth of OLL making a new SAT solver
+                               /**< A compute() starting when OLL has given
+				* the SAT solver more than this many times as
+				* many clauses as in the first compute() with
+				* it makes a new SAT solver [see the class]; 0
+				* (the default) means never. */
   intLastAlgParSATS            ///< first new int parameter of derived classes
   };
 
@@ -584,6 +598,42 @@ class SATSolver : public Solver , public RelaxationSolver
  void tot_extend( int node , std::size_t k );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the literal of the SAT solver of a literal of the SATBlock
+
+ [[nodiscard]] int sat_lit( int lit ) const {
+  const int v = v_ivar[ std::abs( lit ) - 1 ];
+  return( lit > 0 ? v : - v );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the variable of the SATBlock of one of the SAT solver, -1 if of OLL
+
+ [[nodiscard]] int block_var( int v ) const {
+  return( v < int( v_uvar.size() ) ? v_uvar[ v ] - 1 : -1 );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// gives the SAT solver a clause of the SATBlock
+
+ void block_clause( const std::vector< int > & clause );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// makes the variables of the SAT solver of those added to the SATBlock
+ /** Gives each variable added to the SATBlock since the SAT solver was made
+  * the next variable of the SAT solver, which is that of the same index only
+  * as long as OLL has made none [see v_ivar]. */
+
+ void sync_variables( void );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// gives the SAT solver a clause made by OLL, counting it in f_oll_clauses
+
+ void oll_clause( const std::vector< int > & clause ) {
+  ++f_oll_clauses;
+  sat_clause( clause );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// true if the time limit dblMaxTime of the running compute() is reached
 
  [[nodiscard]] bool time_is_up( void ) const;
@@ -639,6 +689,8 @@ class SATSolver : public Solver , public RelaxationSolver
 
  int CoreMinBudget = 1000;     ///< the parameter intMaxSATMinBudget
 
+ int Restart = 0;              ///< the parameter intMaxSATRestart
+
  int MaxIter = Inf< int >();   ///< the parameter intMaxIter
 
  std::string BranchRule;       ///< the parameter strBranchRule
@@ -650,6 +702,24 @@ class SATSolver : public Solver , public RelaxationSolver
  bool f_iter_stop = false;     ///< if OLL has stopped for intMaxIter
 
  int f_next_var = 0;           ///< the last variable of the SAT solver
+
+ /// the variable of the SAT solver of each variable of the SATBlock: i + 1
+ /// for those there when the SAT solver was made, the next one free for
+ /// those added after, OLL having taken the ones in between
+ std::vector< int > v_ivar;
+
+ /// the variable of the SATBlock, plus 1, of each variable of the SAT
+ /// solver up to the last one of the SATBlock, 0 for those made by OLL
+ std::vector< int > v_uvar;
+
+ /// the index of the variable of each assumption of the fixed x
+ std::vector< unsigned int > v_fixed_idx;
+
+ /// the clauses OLL has given the SAT solver since it was made
+ std::size_t f_oll_clauses = 0;
+
+ /// the clauses OLL has given the SAT solver in the first compute() with it
+ std::size_t f_oll_first = 0;
 
  /// the best solution found by OLL, empty if none
  std::vector< unsigned char > v_model;

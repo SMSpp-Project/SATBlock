@@ -81,9 +81,9 @@ static bool load_throws( const std::string & text , char frmt = 0 )
 
 static void set_values( SATBlock & b , unsigned long mask )
 {
- auto & x = b.get_variables();
- for( unsigned int i = 0 ; i < x.size() ; ++i )
-  x[ i ].set_value( ( mask >> i ) & 1 );
+ if( b.has_variables() )
+  for( unsigned int i = 0 ; i < b.get_number_variables() ; ++i )
+   b.var( i ).set_value( ( mask >> i ) & 1 );
  for( unsigned int c = 0 ; c < b.get_number_clauses() ; ++c ) {
   const auto & cl = b.get_clauses()[ c ];
   const bool sat = std::any_of( cl.begin() , cl.end() , [ mask ]( int l ) {
@@ -806,7 +806,8 @@ static void test_modifications( void )
  const auto & lc = b.get_added_clause_constraints();
  assert( ( b.get_number_clauses() == 7 ) && ( lc.size() == 2 ) );
  assert( b.get_dynamic_constraint_groups().size() == 1 );
- assert( b.get_dynamic_variable_groups().size() == 1 );
+ // "added r" and "added x"
+ assert( b.get_dynamic_variable_groups().size() == 2 );
  assert( ( ! b.get_violation( 5 ).is_fixed() ) &&
 	 b.get_violation( 6 ).is_fixed() );
  // the 7 r and the 2 x, the terms found by their variable
@@ -843,6 +844,25 @@ static void test_modifications( void )
   thrown = true;
   }
  assert( thrown && b.is_hard( 0 ) );
+
+ // 2 variables added: their x in "added x" and in the Objective with cost
+ // 0, then a clause on them and a cost, which the MILP formulation follows
+ b.add_variables( 2 );
+ assert( ( b.get_number_variables() == 4 ) &&
+	 ( b.get_variables().size() == 2 ) &&
+	 ( obj->get_num_active_var() == 11 ) &&
+	 ( obj->get_coefficient( obj->is_active( & b.var( 3 ) ) ) == 0 ) );
+ b.add_clauses( { { -3 , 4 } } , { 5 } );
+ std::vector< double > c4 = { 7 };
+ b.chg_costs( c4 , Block::Range( 3 , 4 ) );
+ assert( ( b.get_costs()[ 3 ] == 7 ) &&
+	 ( obj->get_coefficient( obj->is_active( & b.var( 3 ) ) ) == 7 ) );
+ for( unsigned long mask = 0 ; mask < 16 ; ++mask ) {
+  set_values( b , mask );
+  assert( rows_feasible( b ) == b.is_feasible() );
+  assert( objective_value( b ) == b.get_violated_weight() +
+	  ( ( mask >> 3 ) & 1 ) * 7 );
+  }
  }
 
 /*--------------------------------------------------------------------------*/
@@ -1199,8 +1219,8 @@ static void test_oll_incremental( void )
  std::srand( 54321 );
  unsigned steps = 0 , infeasible = 0;
  for( unsigned t = 0 ; t < 60 ; ++t ) {
-  const unsigned n = 4 + std::rand() % 7;          // 4 to 10 variables
-  auto rnd_clause = [ n ]( void ) {
+  unsigned n = 4 + std::rand() % 7;  // 4 to 10 variables, then up to 12
+  auto rnd_clause = [ & n ]( void ) {
    SATBlock::Clause cl;
    const unsigned len = 1 + std::rand() % 3;
    for( unsigned l = 0 ; l < len ; ++l )
@@ -1221,10 +1241,13 @@ static void test_oll_incremental( void )
   SATBlock b;
   b.load( n , std::move( clauses ) , std::move( weights ) );
   b.generate_abstract_variables();
-  auto & x = b.get_variables();
 
+  // a third of the instances never makes a new SAT solver, the others do
+  // as soon as OLL has given it more clauses than in the first compute(),
+  // or more than twice as many
   auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
   s->set_par( SATSolver::intMaxSAT , 1 );
+  s->set_par( SATSolver::intMaxSATRestart , int( t % 3 ) );
   b.register_Solver( s );
 
   std::vector< int > fixed( n , -1 );  // the value of a fixed x, -1 if not
@@ -1232,9 +1255,10 @@ static void test_oll_incremental( void )
    // the first compute() on the instance as it is, then a Modification
    // before each of the others: mostly new costs, as the Lagrangian term of
    // a decomposition gives, then weights changed (a clause possibly turning
-   // hard or soft), clauses added, a variable fixed or all of them unfixed
+   // hard or soft), clauses added, variables added with a clause on each of
+   // them, a variable fixed or all of them unfixed
    if( step > 0 )
-    switch( std::rand() % 8 ) {
+    switch( std::rand() % 9 ) {
      case( 0 ): case( 1 ): case( 2 ): {
       std::vector< double > c( n );
       for( auto & ci : c )
@@ -1265,15 +1289,33 @@ static void test_oll_incremental( void )
      case( 5 ): case( 6 ): {
       const unsigned i = std::rand() % n;
       fixed[ i ] = std::rand() % 2;
-      x[ i ].is_fixed( false );
-      x[ i ].set_value( fixed[ i ] );
-      x[ i ].is_fixed( true );
+      b.var( i ).is_fixed( false );
+      b.var( i ).set_value( fixed[ i ] );
+      b.var( i ).is_fixed( true );
+      break;
+      }
+     case( 7 ): {
+      const unsigned k = std::min( 1u + std::rand() % 2 , 12u - n );
+      if( k == 0 )
+       break;
+      b.add_variables( k );
+      SATBlock::v_Clause nc;
+      SATBlock::v_Weight nw;
+      for( unsigned i = n ; i < n + k ; ++i ) {
+       auto cl = rnd_clause();
+       cl.push_back( int( i + 1 ) * ( std::rand() % 2 ? 1 : -1 ) );
+       nc.push_back( std::move( cl ) );
+       nw.push_back( rnd_weight() );
+       }
+      n += k;
+      fixed.resize( n , -1 );
+      b.add_clauses( std::move( nc ) , std::move( nw ) );
       break;
       }
      default:
       for( unsigned i = 0 ; i < n ; ++i ) {
        fixed[ i ] = -1;
-       x[ i ].is_fixed( false );
+       b.var( i ).is_fixed( false );
        }
      }
 

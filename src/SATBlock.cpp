@@ -543,6 +543,7 @@ void SATBlock::generate_abstract_variables( Configuration * stvv )
  add_static_variable( v_x , "x" );
  add_static_variable( v_r , "r" );
  add_dynamic_variable( l_r , "added r" );
+ add_dynamic_variable( l_x , "added x" );
 
  AR |= HasVar;
  }
@@ -552,10 +553,12 @@ void SATBlock::generate_abstract_variables( Configuration * stvv )
 ColVariable & SATBlock::var( unsigned int i )
 {
  if( f_structure == kNoStructure ) {
-  if( i >= v_x.size() )
+  if( ( ! ( AR & HasVar ) ) || ( i >= f_n_var ) )
    throw( std::logic_error( "SATBlock::var: the ColVariable have not been "
 			    "generated" ) );
-  return( v_x[ i ] );
+  if( i < v_x.size() )
+   return( v_x[ i ] );
+  return( *v_added_x[ i - v_x.size() ] );
   }
 
  return( group_Block( v_group[ i ] ).var( v_local[ i ] ) );
@@ -601,7 +604,7 @@ void SATBlock::set_clause_constraint( FRowConstraint & c , unsigned int i ,
   coeffs.reserve( v_clauses[ i ].size() + 1 );
   lhs = 1;
   for( auto lit : v_clauses[ i ] ) {
-   coeffs.emplace_back( & v_x[ std::abs( lit ) - 1 ] , lit > 0 ? 1 : -1 );
+   coeffs.emplace_back( & var( std::abs( lit ) - 1 ) , lit > 0 ? 1 : -1 );
    if( lit < 0 )
     --lhs;
    }
@@ -732,7 +735,7 @@ void SATBlock::generate_objective( Configuration * objc )
  for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
   coeffs.emplace_back( & violation( i ) , is_hard( i ) ? 0 : v_weights[ i ] );
  for( unsigned int i = 0 ; i < f_n_var ; ++i )
-  coeffs.emplace_back( & v_x[ i ] , v_costs[ i ] );
+  coeffs.emplace_back( & var( i ) , v_costs[ i ] );
 
  f_obj.set_function( new LinearFunction( std::move( coeffs ) , 0 ) , eNoMod );
  f_obj.set_sense( Objective::eMin , eNoMod );
@@ -957,7 +960,7 @@ void SATBlock::set_cost( unsigned int i , double c , ModParam issueAMod )
  v_costs[ i ] = c;
  if( ( AR & HasObj ) && not_dry_run( issueAMod ) ) {
   auto lf = static_cast< LinearFunction * >( f_obj.get_function() );
-  lf->modify_coefficient( lf->is_active( & v_x[ i ] ) , c ,
+  lf->modify_coefficient( lf->is_active( & var( i ) ) , c ,
 			  un_ModBlock( issueAMod ) );
   }
  }
@@ -1098,6 +1101,11 @@ void SATBlock::add_Modification( sp_Mod mod , ChnlName chnl )
 	( var < v_x.data() + v_x.size() ) ) {
      xs.push_back( Index( static_cast< const ColVariable * >( var ) -
 			  v_x.data() ) );
+     xc.push_back( coeff );
+     continue;
+     }
+    if( const auto ax = m_added_x.find( var ) ; ax != m_added_x.end() ) {
+     xs.push_back( ax->second );
      xc.push_back( coeff );
      continue;
      }
@@ -1379,6 +1387,58 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
 
 /*--------------------------------------------------------------------------*/
 
+void SATBlock::add_variables( unsigned int k , ModParam issueMod ,
+			      ModParam issueAMod )
+{
+ if( k == 0 )  // nothing to add
+  return;
+
+ if( f_structure != kNoStructure )
+  throw( std::logic_error( "SATBlock::add_variables: a SATBlock with a "
+			   "structure cannot add variables" ) );
+
+ if( ! not_dry_run( issueMod ) )
+  return;
+
+ const Index first = f_n_var;
+ f_n_var += k;
+ v_costs.resize( f_n_var , 0 );
+
+ // the abstract representation: the new x, and their terms in the Objective
+ if( ( AR & HasVar ) && not_dry_run( issueAMod ) ) {
+  std::list< ColVariable > nx( k );
+  for( auto & x : nx )
+   x.set_type( ColVariable::kBinary , eNoMod );
+  add_dynamic_variables( l_x , nx , un_ModBlock( issueAMod ) );
+
+  // the new x are the last ones of l_x
+  Index i = first;
+  for( auto it = std::prev( l_x.end() , long( k ) ) ; it != l_x.end() ;
+       ++it , ++i ) {
+   v_added_x.push_back( & *it );
+   m_added_x.emplace( & *it , i );
+   }
+
+  if( AR & HasObj ) {
+   LinearFunction::v_coeff_pair coeffs;
+   coeffs.reserve( k );
+   for( auto it = std::prev( l_x.end() , long( k ) ) ; it != l_x.end() ;
+	++it )
+    coeffs.emplace_back( & *it , 0 );
+   static_cast< LinearFunction * >( f_obj.get_function() )->add_variables(
+				   std::move( coeffs ) , un_ModBlock( issueAMod ) );
+   }
+  }
+
+ if( issue_pmod( issueMod ) )
+  add_Modification( std::make_shared< SATBlockRngdMod >( this ,
+			     SATBlockMod::eAddVariables ,
+			     Range( first , f_n_var ) ) ,
+		    Observer::par2chnl( issueMod ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 void SATBlock::guts_of_destructor( void )
 {
  // the rows and the Objective go before the ColVariable they are active in,
@@ -1402,6 +1462,9 @@ void SATBlock::guts_of_destructor( void )
  l_r.clear();
  v_r.clear();
  v_x.clear();
+ l_x.clear();
+ v_added_x.clear();
+ m_added_x.clear();
  guts_of_reset_structure();
  v_group.clear();
 
