@@ -159,3 +159,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tunable fraction of hard linking clauses, possibly with a planted
   assignment that makes the hard clauses satisfiable, written as WCNF or as a
   netCDF `SATBlock`; the same seed gives the same instance with any compiler
+
+[Unreleased]: https://gitlab.com/smspp/satblock/-/compare/0.1.0...develop
+[0.1.0]: https://gitlab.com/smspp/satblock/-/tags/0.1.0
