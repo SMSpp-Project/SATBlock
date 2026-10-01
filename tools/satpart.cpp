@@ -19,6 +19,10 @@
  * is left between them, those left being then dealt to the k largest ones,
  * the largest first into the smallest, which changes no linking clause; the
  * linking clauses are those whose variables end up in more than one group.
+ * With -b eps no merge makes a group of more than ( 1 + eps ) n / k of the
+ * n variables, which keeps the sub-Block of the same size: the edges that
+ * would are skipped, and so there may be more than k groups at the end, as
+ * there may be groups larger than that if a community already is.
  *
  * The clauses longer than the value of -c are left out of the graph, since
  * each one would add a clique of quadratic size; they link whatever groups
@@ -83,6 +87,8 @@ static void usage( const char * prog )
   << std::endl
   << "netCDF SATBlock with them." << std::endl
   << "  -k <int>    merge the communities down to this many groups [0 = no]"
+  << std::endl
+  << "  -b <real>   with -k, no group above ( 1 + b ) n / k variables [inf]"
   << std::endl
   << "  -c <int>    longest clause in the graph [50]" << std::endl
   << "  -s <int>    seed of the order of the visits [0]" << std::endl;
@@ -265,7 +271,7 @@ static std::vector< unsigned int > louvain( const Graph & g ,
 /// no linking clause
 
 static void merge_down( const Graph & g , std::vector< unsigned int > & part ,
-			unsigned int k )
+			unsigned int k , double cap )
 {
  unsigned int nc = renumber( part );
  if( nc <= k )
@@ -318,6 +324,8 @@ static void merge_down( const Graph & g , std::vector< unsigned int > & part ,
   auto it = adj[ u ].find( v );
   if( ( it == adj[ u ].end() ) || ( it->second != w ) )
    continue;
+  if( double( size[ u ] + size[ v ] ) > cap )  // too large a group
+   continue;
 
   // v into u, the smaller adjacency into the larger one
   if( adj[ v ].size() > adj[ u ].size() )
@@ -349,6 +357,8 @@ static void merge_down( const Graph & g , std::vector< unsigned int > & part ,
    for( std::size_t b = 1 ; b < k ; ++b )
     if( size[ rest[ b ] ] < size[ best ] )
      best = rest[ b ];
+   if( double( size[ best ] + size[ rest[ r ] ] ) > cap )
+    continue;  // a group of its own
    size[ best ] += size[ rest[ r ] ];
    into[ rest[ r ] ] = best;
    }
@@ -366,12 +376,14 @@ static void merge_down( const Graph & g , std::vector< unsigned int > & part ,
 int main( int argc , char ** argv )
 {
  unsigned int k = 0 , maxlen = 50;
+ double eps = -1;  // no cap
  std::uint64_t seed = 0;
 
  int opt;
- while( ( opt = getopt( argc , argv , "k:c:s:h" ) ) != -1 )
+ while( ( opt = getopt( argc , argv , "k:b:c:s:h" ) ) != -1 )
   switch( opt ) {
    case( 'k' ): k = unsigned( std::stoul( optarg ) ); break;
+   case( 'b' ): eps = std::stod( optarg ); break;
    case( 'c' ): maxlen = unsigned( std::stoul( optarg ) ); break;
    case( 's' ): seed = std::stoull( optarg ); break;
    default: usage( argv[ 0 ] ); return( opt == 'h' ? 0 : 1 );
@@ -420,7 +432,8 @@ int main( int argc , char ** argv )
  auto part = louvain( g , gen );
  const auto ncomm = renumber( part );
  if( k && ( ncomm > k ) )
-  merge_down( g , part , k );
+  merge_down( g , part , k , eps < 0 ? double( part.size() ) :
+	      ( 1 + eps ) * double( part.size() ) / k );
  const auto ngroups = renumber( part );
 
  std::vector< int > groups( part.begin() , part.end() );
@@ -444,8 +457,10 @@ int main( int argc , char ** argv )
 
  // the output - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  std::ostringstream record;
- record << "satpart -k " << k << " -c " << maxlen << " -s " << seed << " "
-	<< in;
+ record << "satpart -k " << k;
+ if( eps >= 0 )
+  record << " -b " << eps;
+ record << " -c " << maxlen << " -s " << seed << " " << in;
  {
   netCDF::NcFile file( out , netCDF::NcFile::replace );
   file.putAtt( "SMS++_file_type" , netCDF::NcInt() , eBlockFile );

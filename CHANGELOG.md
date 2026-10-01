@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `smspp_satpart`, which deals the variables of a CNF, WCNF or netCDF
   instance out to groups, the communities of its variable incidence graph
   found by the Louvain method, merged down to the number of `-k` if given,
+  with no group above ( 1 + `-b` ) n / k variables if that is given too,
   and writes it as a netCDF `SATBlock` with them
 
 - the variables of a `SATBlock` may be dealt out to groups, part of its
