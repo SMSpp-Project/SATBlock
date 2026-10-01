@@ -1484,6 +1484,16 @@ static void test_residual_graph( void )
 	 ( g.vertex[ 4 ] == 0 ) && ( g.vertex[ 7 + 4 ] == 0.75f ) );
  // the clause not x1, of weight 4, the largest
  assert( ( g.vertex[ 14 + 5 ] == 1 ) && ( g.vertex[ 14 + 6 ] == 0 ) );
+ // with the index: the same seven columns, then x1 and x3 over the 4 x,
+ // and 0 for the clause
+ SATResidualGraph gi;
+ assert( gi.build( * s , SATResidualGraph::eMaxSATIndex ) &&
+	 ( gi.n_col == 8 ) && ( gi.var == g.var ) );
+ for( long v = 0 ; v < 3 ; ++v )
+  for( unsigned int col = 0 ; col < 7 ; ++col )
+   assert( gi.vertex[ v * 8 + col ] == g.vertex[ v * 7 + col ] );
+ assert( ( gi.vertex[ 7 ] == 0 ) && ( gi.vertex[ 8 + 7 ] == 0.5f ) &&
+	 ( gi.vertex[ 16 + 7 ] == 0 ) );
 
  // x1 fixed true too: not x1 has no literal left, nothing to say
  x[ 0 ].set_value( 1 ); x[ 0 ].is_fixed( true );

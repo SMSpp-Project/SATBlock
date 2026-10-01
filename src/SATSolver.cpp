@@ -991,7 +991,7 @@ bool SATResidualGraph::build( const SATSolver & solver , int features )
   vertex[ v * n_col ] = 1;
  for( long c = n_var ; c < n_var + n_clause ; ++c )
   vertex[ c * n_col + 1 ] = 1;
- if( features != eMaxSAT )
+ if( ( features != eMaxSAT ) && ( features != eMaxSATIndex ) )
   return( true );
 
  // what a weighted MaxSAT node has: the largest weight, the best solution,
@@ -1015,6 +1015,8 @@ bool SATResidualGraph::build( const SATSolver & solver , int features )
   row[ 2 ] = best.empty() ? 0.5f : float( best[ i ] );
   row[ 3 ] = smax > 0 ? float( score[ i ] / smax ) : 0.0f;
   row[ 4 ] = i < costs.size() ? float( costs[ i ] / wmax ) : 0.0f;
+  if( features == eMaxSATIndex )
+   row[ 7 ] = float( double( i ) / sat.get_number_variables() );
   }
  for( long c = 0 ; c < n_clause ; ++c ) {
   const auto i = kept_clause[ c ];

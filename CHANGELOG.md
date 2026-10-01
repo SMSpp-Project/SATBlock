@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SATResidualGraph::eMaxSATIndex`, the rows of `eMaxSAT` with the index of
+  the variable over the number of variables, which tells apart the
+  variables the cores score the same as the rule of the cores does, and
+  which a policy exported with `features` 2 reads
+
 - `smspp_satpart`, which deals the variables of a CNF, WCNF or netCDF
   instance out to groups, the communities of its variable incidence graph
   found by the Louvain method, merged down to the number of `-k` if given,

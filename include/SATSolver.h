@@ -711,7 +711,10 @@ class SATSolver : public Solver , public RelaxationSolver
  * cores [see SATSolver::core_scores()] divided by the largest one, and its
  * cost divided by the largest weight; for a clause (columns 5 and 6, 0 for
  * a variable), its weight divided by the largest one (1 if hard), and 1 if
- * it is hard. */
+ * it is hard. With eMaxSATIndex they have an eighth one, for a variable the
+ * index of its x divided by the number of the x (0 for a clause), which is
+ * what tells apart the variables the cores score the same, since the rule
+ * of the cores of SATSolver::branch() takes the one of smallest index. */
 
 class SATResidualGraph
 {
@@ -724,14 +727,15 @@ class SATResidualGraph
 
  enum features_type {
   eGQSAT = 0 ,  ///< those of Graph-Q-SAT: variable or clause
-  eMaxSAT       ///< those, plus what a weighted MaxSAT node has
+  eMaxSAT ,     ///< those, plus what a weighted MaxSAT node has
+  eMaxSATIndex  ///< those, plus the index of the variable
   };
 
 /*----------------------- PUBLIC METHODS OF THE CLASS ----------------------*/
  /// the number of columns of the rows of the vertices
 
  [[nodiscard]] static unsigned int n_features( int features ) {
-  return( features == eMaxSAT ? 7 : 2 );
+  return( features == eMaxSATIndex ? 8 : ( features == eMaxSAT ? 7 : 2 ) );
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
