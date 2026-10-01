@@ -15,8 +15,10 @@
  * most, until no move increases it, and then the communities become the
  * vertices of a smaller graph, on which the same is done, until nothing
  * changes. With -k the communities are then merged, the two with the
- * heaviest edge between them first, until there are k of them, the linking
- * clauses being those whose variables end up in more than one group.
+ * heaviest edge between them first, until there are k of them or no edge
+ * is left between them, those left being then dealt to the k largest ones,
+ * the largest first into the smallest, which changes no linking clause; the
+ * linking clauses are those whose variables end up in more than one group.
  *
  * The clauses longer than the value of -c are left out of the graph, since
  * each one would add a clique of quadratic size; they link whatever groups
@@ -44,8 +46,10 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <queue>
 #include <random>
 #include <sstream>
+#include <tuple>
 #include <unordered_map>
 #include <getopt.h>
 
@@ -255,43 +259,104 @@ static std::vector< unsigned int > louvain( const Graph & g ,
  }
 
 /*--------------------------------------------------------------------------*/
-/// merges the communities, the two with the heaviest edge between them
-/// first, two isolated ones the smallest first, until there are k
+/// merges the communities down to k: the two with the heaviest edge between
+/// them first, and then, when no edge is left, each of those that remain,
+/// the largest first, into the smallest of the k largest ones, which changes
+/// no linking clause
 
 static void merge_down( const Graph & g , std::vector< unsigned int > & part ,
 			unsigned int k )
 {
  unsigned int nc = renumber( part );
- while( nc > k ) {
-  const auto a = aggregate( g , part , nc );
-  std::vector< std::size_t > size( nc , 0 );
-  for( auto p : part )
-   ++size[ p ];
+ if( nc <= k )
+  return;
 
-  unsigned int bu = 0 , bv = 0;
-  double bw = -1;
-  for( unsigned int u = 0 ; u < nc ; ++u )
-   for( const auto & [ v , w ] : a[ u ] )
-    if( ( u < v ) && ( w > bw ) ) {
-     bw = w;
-     bu = u;
-     bv = v;
-     }
-  if( bw < 0 ) {  // no edge between communities: the two smallest
-   std::vector< unsigned int > ord( nc );
-   for( unsigned int c = 0 ; c < nc ; ++c )
-    ord[ c ] = c;
-   std::sort( ord.begin() , ord.end() , [ & size ]( auto x , auto y ) {
-    return( size[ x ] < size[ y ] || ( size[ x ] == size[ y ] && x < y ) );
-    } );
-   bu = std::min( ord[ 0 ] , ord[ 1 ] );
-   bv = std::max( ord[ 0 ] , ord[ 1 ] );
+ // the graph of the communities, without the self loops
+ std::vector< std::map< unsigned int , double > > adj( nc );
+ for( unsigned int u = 0 ; u < g.size() ; ++u )
+  for( const auto & [ v , w ] : g[ u ] )
+   if( ( u < v ) && ( part[ u ] != part[ v ] ) ) {
+    adj[ part[ u ] ][ part[ v ] ] += w;
+    adj[ part[ v ] ][ part[ u ] ] += w;
+    }
+ std::vector< std::size_t > size( nc , 0 );
+ for( auto p : part )
+  ++size[ p ];
+
+ // the community each one has been merged into, followed to the end
+ std::vector< unsigned int > into( nc );
+ for( unsigned int c = 0 ; c < nc ; ++c )
+  into[ c ] = c;
+ auto find = [ & into ]( unsigned int c ) {
+  while( into[ c ] != c )
+   c = into[ c ] = into[ into[ c ] ];
+  return( c );
+  };
+
+ // the edges by weight, the heaviest first, the stale ones skipped; ties
+ // broken by the indices, so that the result does not depend on the heap
+ using Edge = std::tuple< double , unsigned int , unsigned int >;
+ auto lighter = []( const Edge & a , const Edge & b ) {
+  if( std::get< 0 >( a ) != std::get< 0 >( b ) )
+   return( std::get< 0 >( a ) < std::get< 0 >( b ) );
+  return( std::make_pair( std::get< 1 >( a ) , std::get< 2 >( a ) ) >
+	  std::make_pair( std::get< 1 >( b ) , std::get< 2 >( b ) ) );
+  };
+ std::priority_queue< Edge , std::vector< Edge > , decltype( lighter ) >
+  heap( lighter );
+ for( unsigned int u = 0 ; u < nc ; ++u )
+  for( const auto & [ v , w ] : adj[ u ] )
+   if( u < v )
+    heap.emplace( w , u , v );
+
+ unsigned int alive = nc;
+ while( ( alive > k ) && ( ! heap.empty() ) ) {
+  auto [ w , u , v ] = heap.top();
+  heap.pop();
+  if( ( into[ u ] != u ) || ( into[ v ] != v ) )
+   continue;
+  auto it = adj[ u ].find( v );
+  if( ( it == adj[ u ].end() ) || ( it->second != w ) )
+   continue;
+
+  // v into u, the smaller adjacency into the larger one
+  if( adj[ v ].size() > adj[ u ].size() )
+   std::swap( u , v );
+  adj[ u ].erase( v );
+  adj[ v ].erase( u );
+  for( const auto & [ x , wx ] : adj[ v ] ) {
+   adj[ x ].erase( v );
+   const double nw = ( adj[ u ][ x ] += wx );
+   adj[ x ][ u ] = nw;
+   heap.emplace( nw , std::min( u , x ) , std::max( u , x ) );
    }
-  for( auto & p : part )
-   if( p == bv )
-    p = bu;
-  nc = renumber( part );
+  adj[ v ].clear();
+  size[ u ] += size[ v ];
+  into[ v ] = u;
+  --alive;
   }
+
+ if( alive > k ) {  // no edge left: the k largest take the others
+  std::vector< unsigned int > rest;
+  for( unsigned int c = 0 ; c < nc ; ++c )
+   if( into[ c ] == c )
+    rest.push_back( c );
+  std::sort( rest.begin() , rest.end() , [ & size ]( auto x , auto y ) {
+   return( size[ x ] > size[ y ] || ( size[ x ] == size[ y ] && x < y ) );
+   } );
+  for( std::size_t r = k ; r < rest.size() ; ++r ) {
+   unsigned int best = rest[ 0 ];
+   for( std::size_t b = 1 ; b < k ; ++b )
+    if( size[ rest[ b ] ] < size[ best ] )
+     best = rest[ b ];
+   size[ best ] += size[ rest[ r ] ];
+   into[ rest[ r ] ] = best;
+   }
+  }
+
+ for( auto & p : part )
+  p = find( p );
+ renumber( part );
  }
 
 /*--------------------------------------------------------------------------*/
