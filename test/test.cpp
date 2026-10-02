@@ -1245,11 +1245,13 @@ static void test_oll_incremental( void )
   // a third of the instances never makes a new SAT solver, the others do
   // as soon as OLL has given it more clauses than in the first compute(),
   // or more than twice as many; half of each third extracts the cores
-  // weight-aware
+  // weight-aware, and half of the instances that make a new SAT solver keep
+  // the cores the last compute() relaxed
   auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
   s->set_par( SATSolver::intMaxSAT , 1 );
   s->set_par( SATSolver::intMaxSATRestart , int( t % 3 ) );
   s->set_par( SATSolver::intMaxSATWCE , int( ( t / 3 ) % 2 ) );
+  s->set_par( SATSolver::intMaxSATKeepCores , int( ( t / 6 ) % 2 ) );
   b.register_Solver( s );
 
   std::vector< int > fixed( n , -1 );  // the value of a fixed x, -1 if not

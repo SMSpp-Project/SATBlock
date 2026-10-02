@@ -94,6 +94,9 @@ void SATSolver::set_par( idx_type par , int value )
   case( intMaxSATWCE ):
    WCE = ( value != 0 );
    break;
+  case( intMaxSATKeepCores ):
+   KeepCores = ( value != 0 );
+   break;
   case( intMaxIter ):
    MaxIter = std::max( value , 0 );
    break;
@@ -112,6 +115,7 @@ int SATSolver::get_dflt_int_par( idx_type par ) const
   case( intMaxSATMinBudget ): return( 1000 );
   case( intMaxSATRestart ):   return( 0 );
   case( intMaxSATWCE ):       return( 0 );
+  case( intMaxSATKeepCores ): return( 0 );
   default:                    return( Solver::get_dflt_int_par( par ) );
   }
  }
@@ -126,6 +130,7 @@ int SATSolver::get_int_par( idx_type par ) const
   case( intMaxSATMinBudget ): return( CoreMinBudget );
   case( intMaxSATRestart ):   return( Restart );
   case( intMaxSATWCE ):       return( WCE ? 1 : 0 );
+  case( intMaxSATKeepCores ): return( KeepCores ? 1 : 0 );
   case( intMaxIter ):         return( MaxIter );
   default:                    return( Solver::get_int_par( par ) );
   }
@@ -145,6 +150,8 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
   return( intMaxSATRestart );
  if( name == "intMaxSATWCE" )
   return( intMaxSATWCE );
+ if( name == "intMaxSATKeepCores" )
+  return( intMaxSATKeepCores );
  return( Solver::int_par_str2idx( name ) );
  }
 
@@ -152,9 +159,9 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
 
 const std::string & SATSolver::int_par_idx2str( idx_type idx ) const
 {
- static const std::array< std::string , 5 > names = { "intMaxSAT" ,
+ static const std::array< std::string , 6 > names = { "intMaxSAT" ,
 		"intMaxSATTrim" , "intMaxSATMinBudget" , "intMaxSATRestart" ,
-		"intMaxSATWCE" };
+		"intMaxSATWCE" , "intMaxSATKeepCores" };
  if( ( idx >= intMaxSAT ) && ( idx < intLastAlgParSATS ) )
   return( names[ idx - intMaxSAT ] );
  return( Solver::int_par_idx2str( idx ) );
@@ -335,6 +342,7 @@ void SATSolver::load_clauses( void )
  v_cores.clear();
  f_oll_clauses = 0;
  f_oll_first = 0;
+ f_oll_computes = 0;
  f_next_var = n;
 
  f_reload = false;
@@ -358,6 +366,138 @@ void SATSolver::sync_variables( void )
   v_ivar.push_back( ++f_next_var );
   v_uvar.resize( f_next_var + 1 , 0 );
   v_uvar[ f_next_var ] = int( i + 1 );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+int SATSolver::soft_lit( unsigned int i )
+{
+ const auto & clauses = f_sat->get_clauses();
+ if( v_soft.size() < clauses.size() )
+  v_soft.resize( clauses.size() , 0 );
+ if( ! v_soft[ i ] ) {
+  if( clauses[ i ].size() == 1 )
+   v_soft[ i ] = sat_lit( clauses[ i ][ 0 ] );
+  else {
+   std::vector< int > clause( clauses[ i ].size() );
+   std::transform( clauses[ i ].begin() , clauses[ i ].end() ,
+		   clause.begin() , [ this ]( int lit ) {
+    return( sat_lit( lit ) ); } );
+   clause.push_back( ++f_next_var );
+   oll_clause( clause );
+   v_soft[ i ] = - f_next_var;
+   }
+  }
+ return( v_soft[ i ] );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATSolver::restart_keeping_cores( void )
+{
+ // what an assumption of a core means whatever the SAT solver: a literal of
+ // the SATBlock (kind 0), the assumption of a soft clause (kind 1), or an
+ // output of the totalizer of an earlier core (kind 2)
+ struct Sym {
+  int kind;
+  std::size_t idx;
+  std::size_t bnd;
+  bool neg;
+  };
+ std::unordered_map< int , std::size_t > relax_of;
+ for( std::size_t i = 0 ; i < v_soft.size() ; ++i )
+  if( v_soft[ i ] && ( block_var( std::abs( v_soft[ i ] ) ) < 0 ) )
+   relax_of[ std::abs( v_soft[ i ] ) ] = i;
+ std::unordered_map< int , std::pair< std::size_t , std::size_t > > out_of;
+ for( std::size_t c = 0 ; c < v_cores.size() ; ++c )
+  if( v_cores[ c ].root >= 0 ) {
+   const auto & out = v_tot[ v_cores[ c ].root ].out;
+   for( std::size_t b = 0 ; b < out.size() ; ++b )
+    out_of[ out[ b ] ] = { c , b };
+   }
+
+ // the cores the last compute() relaxed, and those whose totalizers they
+ // are made of, which come before them
+ std::vector< unsigned char > keep( v_cores.size() , 0 );
+ for( std::size_t c = v_cores.size() ; c-- > 0 ; ) {
+  if( v_cores[ c ].used == f_oll_computes )
+   keep[ c ] = 1;
+  if( ! keep[ c ] )
+   continue;
+  for( auto lit : v_cores[ c ].lits )
+   if( const auto it = out_of.find( std::abs( lit ) ) ; it != out_of.end() )
+    keep[ it->second.first ] = 1;
+  }
+
+ struct Kept {
+  std::size_t old;              // its index among the old cores
+  std::vector< Sym > lits;      // its assumptions
+  std::vector< int > cond;      // its fixed variables, as in the SATBlock
+  };
+ std::vector< Kept > kept;
+ for( std::size_t c = 0 ; c < v_cores.size() ; ++c ) {
+  if( ! keep[ c ] )
+   continue;
+  Kept k{ c , {} , {} };
+  for( auto lit : v_cores[ c ].lits ) {
+   const int v = std::abs( lit );
+   if( const auto bv = block_var( v ) ; bv >= 0 )
+    k.lits.push_back( { 0 , std::size_t( bv ) , 0 , lit < 0 } );
+   else
+    if( const auto it = relax_of.find( v ) ; it != relax_of.end() )
+     k.lits.push_back( { 1 , it->second , 0 , lit < 0 } );
+    else {
+     const auto [ oc , ob ] = out_of.at( v );
+     k.lits.push_back( { 2 , oc , ob , lit < 0 } );
+     }
+   }
+  for( auto lit : v_cores[ c ].cond )
+   k.cond.push_back( lit > 0 ? block_var( lit ) + 1
+			     : - ( block_var( - lit ) + 1 ) );
+  kept.push_back( std::move( k ) );
+  }
+
+ // a new SAT solver, and the cores kept with their totalizers anew
+ load_clauses();
+ std::unordered_map< std::size_t , int > root_of;
+ for( const auto & k : kept ) {
+  std::vector< int > lits;
+  lits.reserve( k.lits.size() );
+  for( const auto & y : k.lits )
+   switch( y.kind ) {
+    case( 0 ):
+     lits.push_back( sat_lit( y.neg ? - int( y.idx + 1 )
+				    : int( y.idx + 1 ) ) );
+     break;
+    case( 1 ):
+     lits.push_back( soft_lit( y.idx ) );
+     break;
+    default: {
+     const int r = root_of.at( y.idx );
+     tot_extend( r , y.bnd + 1 );
+     const int o = v_tot[ r ].out[ y.bnd ];
+     lits.push_back( y.neg ? - o : o );
+     }
+    }
+  std::vector< int > cond;
+  for( auto u : k.cond )
+   cond.push_back( sat_lit( u ) );
+  std::sort( cond.begin() , cond.end() );
+
+  int root = -1;
+  if( lits.size() > 1 ) {
+   std::vector< int > viol;
+   viol.reserve( lits.size() );
+   for( auto lit : lits )
+    viol.push_back( - lit );
+   root = tot_build( viol , 0 , viol.size() );
+   }
+  else
+   if( cond.empty() )
+    oll_clause( { - lits[ 0 ] } );
+  root_of[ k.old ] = root;
+  v_cores.push_back( { std::move( lits ) , std::move( cond ) , root , 0 } );
   }
  }
 
@@ -406,17 +546,20 @@ int SATSolver::compute( bool changedvars )
  f_start = std::chrono::steady_clock::now();
 
  process_outstanding_Modification();
- // what OLL has made is thrown away if it has grown too much since the
- // first compute() with this SAT solver
- if( ( Restart > 0 ) && ( f_oll_first > 0 ) &&
-     ( f_oll_clauses > std::size_t( Restart ) * f_oll_first ) )
-  f_reload = true;
- if( f_reload || ( ! f_has_sat ) )
+ // what OLL has made is thrown away, all of it or but the cores the last
+ // compute() relaxed, if it has grown too much since the first compute()
+ // with this SAT solver
+ const bool grown = ( Restart > 0 ) && ( f_oll_first > 0 ) &&
+		    ( f_oll_clauses > std::size_t( Restart ) * f_oll_first );
+ if( f_reload || ( ! f_has_sat ) || ( grown && ( ! KeepCores ) ) )
   load_clauses();
- else {
-  sync_variables();
-  sync_clauses();
-  }
+ else
+  if( grown )
+   restart_keeping_cores();
+  else {
+   sync_variables();
+   sync_clauses();
+   }
 
  // the fixed ColVariable x, if they exist, are assumptions
  const c_XView x{ *f_sat };
@@ -632,10 +775,9 @@ int SATSolver::oll( const std::vector< int > & fixed )
  // the soft clauses with the weights of now, the literal of each being made
  // once for all the compute() of the same SAT solver
  f_lb = 0;
+ ++f_oll_computes;
  const auto & clauses = f_sat->get_clauses();
  const auto & weights = f_sat->get_weights();
- if( v_soft.size() < clauses.size() )
-  v_soft.resize( clauses.size() , 0 );
  for( unsigned int i = 0 ; i < clauses.size() ; ++i ) {
   if( f_sat->is_hard( i ) || ( weights[ i ] == 0 ) ||
       f_sat->is_tautology( i ) )
@@ -644,20 +786,7 @@ int SATSolver::oll( const std::vector< int > & fixed )
    f_lb += weights[ i ];
    continue;
    }
-  if( ! v_soft[ i ] ) {
-   if( clauses[ i ].size() == 1 )
-    v_soft[ i ] = sat_lit( clauses[ i ][ 0 ] );
-   else {
-    std::vector< int > clause( clauses[ i ].size() );
-    std::transform( clauses[ i ].begin() , clauses[ i ].end() ,
-		    clause.begin() , [ this ]( int lit ) {
-     return( sat_lit( lit ) ); } );
-    clause.push_back( ++f_next_var );
-    oll_clause( clause );
-    v_soft[ i ] = - f_next_var;
-    }
-   }
-  add_soft( v_soft[ i ] , weights[ i ] , -1 , 0 );
+  add_soft( soft_lit( i ) , weights[ i ] , -1 , 0 );
   }
 
  // the costs of the variables: c_i > 0 is the unit soft clause "not x_i" of
@@ -684,7 +813,7 @@ int SATSolver::oll( const std::vector< int > & fixed )
    wmin = std::min( wmin , it == soft.end() ? 0.0 : it->second.w );
    }
   if( ! ( wmin > 0 ) )
-   return;
+   return( false );
   f_lb += wmin;
   for( auto lit : core ) {
    auto & sl = soft[ lit ];
@@ -702,6 +831,7 @@ int SATSolver::oll( const std::vector< int > & fixed )
    tot_extend( root , 2 );
    add_soft( - v_tot[ root ].out[ 1 ] , wmin , root , 1 );
    }
+  return( true );
   };
 
  // the cores of the previous compute() with the same SAT solver: a core
@@ -712,10 +842,11 @@ int SATSolver::oll( const std::vector< int > & fixed )
  {
   std::vector< int > sfixed( fixed );
   std::sort( sfixed.begin() , sfixed.end() );
-  for( const auto & core : v_cores )
+  for( auto & core : v_cores )
    if( std::includes( sfixed.begin() , sfixed.end() ,
-		      core.cond.begin() , core.cond.end() ) )
-    relax( core.lits , core.root );
+		      core.cond.begin() , core.cond.end() ) &&
+       relax( core.lits , core.root ) )
+    core.used = f_oll_computes;
   }
 
  // the stratification: the assumptions weighing at least tau are given to
@@ -846,7 +977,7 @@ int SATSolver::oll( const std::vector< int > & fixed )
    if( cond.empty() )
     oll_clause( { - core[ 0 ] } );
 
-  v_cores.push_back( { core , cond , root } );
+  v_cores.push_back( { core , cond , root , f_oll_computes } );
   relax( core , root );
   }
  }

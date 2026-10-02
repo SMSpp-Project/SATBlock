@@ -166,7 +166,11 @@ namespace SMSpp_di_unipi_it
  * intMaxSATRestart set to k > 0, a compute() starting when OLL has given
  * the SAT solver more than k times as many clauses as in the first
  * compute() with it makes a new SAT solver, which starts from the hard
- * clauses only.
+ * clauses only; with intMaxSATKeepCores set to 1 it starts also from the
+ * cores that the last compute() relaxed (either found then or relaxed again
+ * with weight left), and from those whose totalizers they are made of,
+ * rebuilt in the same order, while the others are dropped together with
+ * their totalizers.
  *
  * A SATSolver is also a RelaxationSolver [see ChangeSolver.h], so that the
  * BranchAndXSolver can enumerate on it. A node is a set of fixed x, which
@@ -323,6 +327,12 @@ class SATSolver : public Solver , public RelaxationSolver
 				* the SAT solver until the others hold
 				* together [see the class]; 0 (the default)
 				* gives them at once. */
+  intMaxSATKeepCores ,         ///< 1 to keep the live cores in a restart
+                               /**< With 1, the new SAT solver that
+				* intMaxSATRestart makes has the cores that
+				* the last compute() relaxed, and those they
+				* are made of, rather than none [see the
+				* class]; 0 (the default) keeps none. */
   intLastAlgParSATS            ///< first new int parameter of derived classes
   };
 
@@ -641,6 +651,25 @@ class SATSolver : public Solver , public RelaxationSolver
  void sync_variables( void );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the assumption of OLL of the soft clause i, made the first time
+ /** Returns the assumption that satisfies the soft clause \p i: its literal
+  * if it is a unit clause, the negation of a new relaxation variable added
+  * to it otherwise, made once for all the compute() of the same SAT
+  * solver. */
+
+ int soft_lit( unsigned int i );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// makes a new SAT solver with the cores the last compute() relaxed
+ /** Makes a new SAT solver as load_clauses() does, and gives it the cores
+  * of the old one that the last compute() relaxed, and those whose
+  * totalizers they are made of, in the order they were found, each one
+  * with its assumptions translated to the new SAT solver and with a new
+  * totalizer [see intMaxSATKeepCores]. */
+
+ void restart_keeping_cores( void );
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// gives the SAT solver a clause made by OLL, counting it in f_oll_clauses
 
  void oll_clause( const std::vector< int > & clause ) {
@@ -708,6 +737,11 @@ class SATSolver : public Solver , public RelaxationSolver
 
  bool WCE = false;             ///< the parameter intMaxSATWCE
 
+ bool KeepCores = false;       ///< the parameter intMaxSATKeepCores
+
+ /// the compute() with OLL done with this SAT solver
+ long f_oll_computes = 0;
+
  int MaxIter = Inf< int >();   ///< the parameter intMaxIter
 
  std::string BranchRule;       ///< the parameter strBranchRule
@@ -759,6 +793,7 @@ class SATSolver : public Solver , public RelaxationSolver
   std::vector< int > lits;     ///< its soft assumptions
   std::vector< int > cond;     ///< the fixed variables in its reason, sorted
   int root = -1;               ///< its totalizer, -1 if a single assumption
+  long used = 0;               ///< the last compute() that relaxed it
   };
 
  std::vector< Core > v_cores;  ///< the cores found with this SAT solver
