@@ -52,10 +52,9 @@ SMSpp_insert_in_factory_cpp_1( SATBlockChange );
 /*------------------------- OTHER INITIALIZATIONS --------------------------*/
 /*--------------------------------------------------------------------------*/
 
-void SATBlock::normalize_clauses( unsigned int first )
+void SATBlock::normalize_clauses( v_Clause & clauses ) const
 {
- for( auto it = v_clauses.begin() + first ; it != v_clauses.end() ; ++it ) {
-  auto & clause = *it;
+ for( auto & clause : clauses ) {
   Clause kept;
   kept.reserve( clause.size() );
   for( auto lit : clause ) {
@@ -66,6 +65,16 @@ void SATBlock::normalize_clauses( unsigned int first )
     kept.push_back( lit );
    }
   clause = std::move( kept );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATBlock::append_clauses( v_Clause && clauses )
+{
+ for( auto & clause : clauses ) {
+  v_clauses.push_back( clause );
+  Clause().swap( clause );  // its memory goes at once
   }
  }
 
@@ -95,8 +104,9 @@ void SATBlock::load( unsigned int n_var , v_Clause && clauses ,
  guts_of_destructor();
 
  f_n_var = n_var;
- v_clauses = std::move( clauses );
- normalize_clauses();
+ normalize_clauses( clauses );
+ v_clauses.clear();
+ append_clauses( std::move( clauses ) );
  if( weights.empty() )
   v_weights.assign( v_clauses.size() , Inf< double >() );
  else
@@ -269,9 +279,13 @@ void SATBlock::deserialize( const netCDF::NcGroup & group )
 				"NumberVariables is required" ) );
  f_n_var = nv.getSize();
 
- ::deserialize< int >( group , "Clauses" , "ClausesStart" , v_clauses );
-
- normalize_clauses();
+ {
+  v_Clause clauses;
+  ::deserialize< int >( group , "Clauses" , "ClausesStart" , clauses );
+  normalize_clauses( clauses );
+  v_clauses.clear();
+  append_clauses( std::move( clauses ) );
+  }
 
  v_weights.assign( v_clauses.size() , Inf< double >() );
  auto w = group.getVar( "Weights" );
@@ -525,6 +539,15 @@ void SATBlock::generate_abstract_variables( Configuration * stvv )
  if( AR & HasVar )  // the Variable are there already
   return;           // nothing to do
 
+ if( ( ! stvv ) && f_BlockConfig )
+  stvv = f_BlockConfig->f_static_variables_Configuration;
+ const auto sc = dynamic_cast< SimpleConfiguration< int > * >( stvv );
+ const bool x_only = sc && ( sc->f_value == 1 );
+ if( x_only && ( f_structure != kNoStructure ) )
+  throw( std::logic_error( "SATBlock::generate_abstract_variables: a "
+			   "SATBlock with a structure cannot have the x "
+			   "only" ) );
+
  if( f_structure != kNoStructure ) {  // all of them are in the sub-Block
   for( auto sub : v_Block )
    sub->generate_abstract_variables();
@@ -536,9 +559,13 @@ void SATBlock::generate_abstract_variables( Configuration * stvv )
  for( auto & x : v_x )
   x.set_type( ColVariable::kBinary , eNoMod );
 
- v_r = std::vector< ColVariable >( v_clauses.size() );
- for( unsigned int i = 0 ; i < v_r.size() ; ++i )
-  set_violation( v_r[ i ] , i );
+ // the r too, unless only the x are asked for
+ f_x_only = x_only;
+ if( ! x_only ) {
+  v_r = std::vector< ColVariable >( v_clauses.size() );
+  for( unsigned int i = 0 ; i < v_r.size() ; ++i )
+   set_violation( v_r[ i ] , i );
+  }
 
  add_static_variable( v_x , "x" );
  add_static_variable( v_r , "r" );
@@ -568,6 +595,9 @@ ColVariable & SATBlock::var( unsigned int i )
 
 ColVariable & SATBlock::violation( unsigned int i )
 {
+ if( f_x_only )
+  throw( std::logic_error( "SATBlock::violation: only the x have been "
+			   "generated" ) );
  if( f_structure != kNoStructure ) {
   const int g = v_clause_group[ i ];
   if( g < 0 )
@@ -657,6 +687,9 @@ void SATBlock::generate_abstract_constraints( Configuration * stcc )
   return;           // nothing to do
 
  generate_abstract_variables();
+ if( f_x_only )
+  throw( std::logic_error( "SATBlock::generate_abstract_constraints: only "
+			   "the x have been generated" ) );
 
  if( f_structure != kNoStructure ) {  // the rows that tie the sub-Block
   for( auto sub : v_Block )
@@ -716,6 +749,9 @@ void SATBlock::generate_objective( Configuration * objc )
   return;           // nothing to do
 
  generate_abstract_variables();
+ if( f_x_only )
+  throw( std::logic_error( "SATBlock::generate_objective: only the x have "
+			   "been generated" ) );
 
  if( f_structure != kNoStructure ) {  // all the terms are in the sub-Block
   for( auto sub : v_Block )
@@ -868,14 +904,17 @@ void SATBlock::serialize( netCDF::NcGroup & group ) const
  if( v_clauses.empty() )
   return;
 
- std::size_t n_lit = 0;
- for( const auto & clause : v_clauses )
-  n_lit += clause.size();
-
+ // the literals and where each clause starts, as they are stored
+ const auto & lits = v_clauses.literals();
+ const auto & starts = v_clauses.starts();
  auto nc = group.addDim( "NumberClauses" , v_clauses.size() );
- auto nl = group.addDim( "NumberLiterals" , n_lit );
- ::serialize< int >( group , "Clauses" , netCDF::NcInt() , "ClausesStart" ,
-		     v_clauses , nl , nc );
+ auto nl = group.addDim( "NumberLiterals" , lits.size() );
+ auto lv = group.addVar( "Clauses" , netCDF::NcInt() , nl );
+ if( ! lits.empty() )
+  lv.putVar( lits.data() );
+ std::vector< unsigned int > start( starts.begin() , starts.end() - 1 );
+ group.addVar( "ClausesStart" , netCDF::NcUint() , nc ).putVar(
+							     start.data() );
 
  if( ! all_hard() )
   group.addVar( "Weights" , netCDF::NcDouble() , nc ).putVar(
@@ -1279,19 +1318,17 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
  const auto n_new = clauses.size();
 
  // the physical representation, left as it was if anything is wrong
- v_clauses.insert( v_clauses.end() ,
-		   std::make_move_iterator( clauses.begin() ) ,
-		   std::make_move_iterator( clauses.end() ) );
+ normalize_clauses( clauses );
+ append_clauses( std::move( clauses ) );
  if( weights.empty() )
   v_weights.resize( v_clauses.size() , Inf< double >() );
  else
   v_weights.insert( v_weights.end() , weights.begin() , weights.end() );
  try {
-  normalize_clauses( first );
   check_weights( first );
   }
  catch( ... ) {
-  v_clauses.resize( first );
+  v_clauses.truncate( first );
   v_weights.resize( first );
   throw;
   }
@@ -1306,7 +1343,7 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
    const auto g = v_group[ std::abs( cl[ 0 ] ) - 1 ];
    if( std::any_of( cl.begin() , cl.end() , [ this , g ]( int lit ) {
 	return( v_group[ std::abs( lit ) - 1 ] != g ); } ) ) {
-    v_clauses.resize( first );
+    v_clauses.truncate( first );
     v_weights.resize( first );
     throw( std::logic_error( "SATBlock::add_clauses: the clause " +
 			     std::to_string( i - first ) + " links groups, "
@@ -1349,8 +1386,8 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
   }
 
  // the abstract representation: the r of the new clauses, their rows and
- // their terms in the Objective
- if( ( AR & HasVar ) && not_dry_run( issueAMod ) ) {
+ // their terms in the Objective, unless only the x are there
+ if( ( AR & HasVar ) && ( ! f_x_only ) && not_dry_run( issueAMod ) ) {
   std::list< ColVariable > nr( n_new );
   Index i = first;
   for( auto & r : nr )
@@ -1465,6 +1502,7 @@ void SATBlock::guts_of_destructor( void )
  l_x.clear();
  v_added_x.clear();
  m_added_x.clear();
+ f_x_only = false;
  guts_of_reset_structure();
  v_group.clear();
 

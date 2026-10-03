@@ -53,6 +53,13 @@ using namespace SMSpp_di_unipi_it;
 
 /// loads a SATBlock out of a string in the given format
 
+static bool same( std::span< const int > a , const SATBlock::Clause & b )
+{
+ return( std::equal( a.begin() , a.end() , b.begin() , b.end() ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 static void load_string( SATBlock & b , const std::string & text ,
 			 char frmt = 0 )
 {
@@ -145,10 +152,10 @@ static void test_load( void )
  assert( b.get_number_variables() == 3 );
  assert( b.get_number_clauses() == 5 );
  const auto & c = b.get_clauses();
- assert( ( c[ 0 ] == SATBlock::Clause{ 1 , -2 } ) &&
-	 ( c[ 1 ] == SATBlock::Clause{ 2 , 3 , -1 } ) &&
-	 ( c[ 2 ] == SATBlock::Clause{ 3 , -2 } ) &&
-	 ( c[ 3 ] == SATBlock::Clause{ 1 , -1 , 2 } ) && c[ 4 ].empty() );
+ assert( ( same( c[ 0 ] , SATBlock::Clause{ 1 , -2 } ) ) &&
+	 ( same( c[ 1 ] , SATBlock::Clause{ 2 , 3 , -1 } ) ) &&
+	 ( same( c[ 2 ] , SATBlock::Clause{ 3 , -2 } ) ) &&
+	 ( same( c[ 3 ] , SATBlock::Clause{ 1 , -1 , 2 } ) ) && c[ 4 ].empty() );
  assert( b.is_tautology( 3 ) && ! b.is_tautology( 0 ) );
 
  // reading stops at the m-th clause and at a line beginning with '%'
@@ -189,7 +196,7 @@ static void test_load_wcnf( void )
  assert( ( o.get_number_variables() == 3 ) &&
 	 ( o.get_number_clauses() == 4 ) );
  assert( ( o.get_weights() == SATBlock::v_Weight{ inf , 3 , 7 , inf } ) );
- assert( ( o.get_clauses()[ 2 ] == SATBlock::Clause{ -1 , 3 } ) );
+ assert( ( same( o.get_clauses()[ 2 ] , SATBlock::Clause{ -1 , 3 } ) ) );
  assert( o.is_hard( 0 ) && ! o.is_hard( 1 ) && ! o.all_hard() );
 
  // up to 2021, without top: all soft
@@ -421,7 +428,7 @@ static void random_grouped( SATBlock & b , unsigned n , unsigned G )
 static void load_structured( SATBlock & b , const SATBlock & u , int type )
 {
  const auto n = u.get_number_variables();
- b.load( n , SATBlock::v_Clause( u.get_clauses() ) ,
+ b.load( n , u.get_clauses().to_vectors() ,
 	 SATBlock::v_Weight( u.get_weights() ) );
  b.chg_costs( u.get_costs() , Block::Range( 0 , n ) );
  b.set_variable_groups( std::vector< int >( u.get_variable_groups() ) );
@@ -641,7 +648,7 @@ static void test_structure( void )
    // the instance as it is, then after each of 3 changes, with the same
    // changes done to a copy of u
    SATBlock uc;
-   uc.load( n , SATBlock::v_Clause( u.get_clauses() ) ,
+   uc.load( n , u.get_clauses().to_vectors() ,
 	    SATBlock::v_Weight( u.get_weights() ) );
    uc.chg_costs( u.get_costs() , Block::Range( 0 , n ) );
    uc.set_variable_groups( std::vector< int >( u.get_variable_groups() ) );
@@ -1171,7 +1178,7 @@ static void test_oll_structure( void )
    best = best0;
 
    SATBlock uc;
-   uc.load( n , SATBlock::v_Clause( u.get_clauses() ) ,
+   uc.load( n , u.get_clauses().to_vectors() ,
 	    SATBlock::v_Weight( u.get_weights() ) );
    uc.chg_costs( u.get_costs() , Block::Range( 0 , n ) );
    uc.set_variable_groups( std::vector< int >( u.get_variable_groups() ) );
@@ -1355,6 +1362,90 @@ static void test_oll_incremental( void )
  std::cout << solver_name << ": OLL optimal through " << steps
 	   << " Modification kept by the same Solver (" << infeasible
 	   << " infeasible)" << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
+/// only the x generated: what can be done with them, and what cannot
+
+static void test_x_only( void )
+{
+ SATBlock b;
+ b.load( 3 , { { 1 , 2 } , { -1 , 3 } , { -2 , -3 } , { 2 } } ,
+	 { Inf< double >() , Inf< double >() , 4 , 3 } );
+ SimpleConfiguration< int > xonly( 1 );
+ b.generate_abstract_variables( & xonly );
+ assert( b.has_variables() && ( ! b.has_violations() ) &&
+	 ( b.get_variables().size() == 3 ) );
+
+ // clauses and variables can still be added, the rows and the Objective
+ // cannot be generated
+ b.add_variables( 1 );
+ b.add_clauses( { { -4 , 1 } } , { 2 } );
+ assert( ( b.get_number_variables() == 4 ) &&
+	 ( b.get_number_clauses() == 5 ) );
+ bool thrown = false;
+ try {
+  b.generate_abstract_constraints();
+  }
+ catch( std::logic_error & ) {
+  thrown = true;
+  }
+ assert( thrown );
+ thrown = false;
+ try {
+  b.generate_objective();
+  }
+ catch( std::logic_error & ) {
+  thrown = true;
+  }
+ assert( thrown );
+
+ // OLL with each x fixed in turn to each value, against the enumeration
+ auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+ s->set_par( SATSolver::intMaxSAT , 1 );
+ b.register_Solver( s );
+ const auto & cl = b.get_clauses();
+ const auto & w = b.get_weights();
+ for( unsigned int i = 0 ; i < 4 ; ++i )
+  for( int v = 0 ; v < 2 ; ++v ) {
+   double best = Inf< double >();
+   for( unsigned long mask = 0 ; mask < 16 ; ++mask ) {
+    if( int( ( mask >> i ) & 1 ) != v )
+     continue;
+    double z = 0;
+    bool feas = true;
+    for( unsigned int c = 0 ; c < cl.size() ; ++c ) {
+     const bool sat = std::any_of( cl[ c ].begin() , cl[ c ].end() ,
+				   [ mask ]( int l ) {
+      return( bool( ( mask >> ( std::abs( l ) - 1 ) ) & 1 ) == ( l > 0 ) );
+      } );
+     if( ! sat ) {
+      if( b.is_hard( c ) )
+       feas = false;
+      else
+       z += w[ c ];
+      }
+     }
+    if( feas )
+     best = std::min( best , z );
+    }
+   auto & x = b.var( i );
+   x.set_value( v );
+   x.is_fixed( true );
+   const int status = s->compute();
+   if( best == Inf< double >() )
+    assert( status == Solver::kInfeasible );
+   else {
+    assert( ( status == Solver::kOK ) && ( s->get_ub() == best ) );
+    s->get_var_solution();
+    assert( b.is_feasible() && ( b.get_violated_weight() == best ) &&
+	    ( b.var( i ).get_value() == v ) );
+    }
+   x.is_fixed( false );
+   }
+ b.unregister_Solvers( true );
+ std::cout << solver_name << ": OLL optimal with the x only, each one "
+	   << "fixed in turn" << std::endl;
  }
 
 /*--------------------------------------------------------------------------*/
@@ -1670,6 +1761,7 @@ int main( int argc , char ** argv )
  test_oll();
  test_oll_structure();
  test_oll_incremental();
+ test_x_only();
  test_branch();
  test_residual_graph();
  test_oll_mse();
@@ -1681,6 +1773,7 @@ int main( int argc , char ** argv )
  test_oll();
  test_oll_structure();
  test_oll_incremental();
+ test_x_only();
  test_branch();
  test_residual_graph();
  test_oll_mse();

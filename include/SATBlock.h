@@ -28,6 +28,7 @@
 /*--------------------------------------------------------------------------*/
 
 #include <list>
+#include <span>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -74,9 +75,10 @@ namespace SMSpp_di_unipi_it
  * become, a unit soft clause being the same as a cost of the other sign.
  *
  * The "physical representation" of the SATBlock is the number n of the
- * variables, the clauses, each one a std::vector of int in the DIMACS
+ * variables, the clauses, each one a sequence of int in the DIMACS
  * convention (the literal i + 1 is x_i, the literal - ( i + 1 ) is its
- * negation), the weights of the clauses and the costs of the variables. A
+ * negation), stored one after the other [see Clauses], the weights of the
+ * clauses and the costs of the variables. A
  * literal appears at most once
  * in a clause, and a clause may be a tautology, i.e., hold both a variable
  * and its negation, in which case it is always satisfied; the empty clause
@@ -142,6 +144,128 @@ class SATBlock : public Block
  using v_Clause = std::vector< Clause >;  ///< a vector of Clause
 
  using c_v_Clause = const v_Clause;       ///< a const vector of Clause
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the clauses of a SATBlock, their literals one after the other
+ /** The clauses of a SATBlock, stored as a single vector of the literals of
+  * all of them, one clause after the other, and the index where each one
+  * starts in it, which takes a fraction of the memory of a std::vector per
+  * clause; the i-th clause is a std::span of its literals, and the
+  * Clauses can be scanned as a vector of them. */
+
+ class Clauses {
+  public:
+  /// a clause: the span of its literals
+  using value_type = std::span< const int >;
+
+  /// an iterator over the clauses, each one a span of its literals
+  class const_iterator {
+   public:
+   using iterator_category = std::random_access_iterator_tag;
+   using value_type = std::span< const int >;
+   using difference_type = std::ptrdiff_t;
+   using pointer = void;
+   using reference = value_type;
+
+   const_iterator( const Clauses * c = nullptr , std::size_t i = 0 )
+    : f_c( c ) , f_i( i ) {}
+   value_type operator*( void ) const { return( ( *f_c )[ f_i ] ); }
+   const_iterator & operator++( void ) { ++f_i; return( *this ); }
+   const_iterator operator++( int ) { auto t = *this; ++f_i; return( t ); }
+   const_iterator & operator--( void ) { --f_i; return( *this ); }
+   const_iterator & operator+=( difference_type d ) {
+    f_i += d;
+    return( *this );
+    }
+   const_iterator operator+( difference_type d ) const {
+    return( const_iterator( f_c ,
+			    std::size_t( difference_type( f_i ) + d ) ) );
+    }
+   difference_type operator-( const const_iterator & o ) const {
+    return( difference_type( f_i ) - difference_type( o.f_i ) );
+    }
+   bool operator==( const const_iterator & o ) const {
+    return( f_i == o.f_i );
+    }
+   bool operator!=( const const_iterator & o ) const {
+    return( f_i != o.f_i );
+    }
+
+   private:
+   const Clauses * f_c;  ///< the clauses
+   std::size_t f_i;      ///< the index of the clause
+   };
+
+  /// returns the number of clauses
+  [[nodiscard]] std::size_t size( void ) const {
+   return( v_start.size() - 1 );
+   }
+
+  /// returns true if there is no clause
+  [[nodiscard]] bool empty( void ) const { return( size() == 0 ); }
+
+  /// returns the i-th clause, the span of its literals
+  [[nodiscard]] value_type operator[]( std::size_t i ) const {
+   return( value_type( v_lits.data() + v_start[ i ] ,
+		       v_start[ i + 1 ] - v_start[ i ] ) );
+   }
+
+  /// the first clause
+  [[nodiscard]] const_iterator begin( void ) const {
+   return( const_iterator( this , 0 ) );
+   }
+
+  /// one past the last clause
+  [[nodiscard]] const_iterator end( void ) const {
+   return( const_iterator( this , size() ) );
+   }
+
+  /// returns true if the clauses are the same, in the same order
+  [[nodiscard]] bool operator==( const Clauses & o ) const {
+   return( ( v_lits == o.v_lits ) && ( v_start == o.v_start ) );
+   }
+
+  /// returns a copy of the clauses as a vector of vectors
+  [[nodiscard]] v_Clause to_vectors( void ) const {
+   v_Clause v;
+   v.reserve( size() );
+   for( const auto c : *this )
+    v.emplace_back( c.begin() , c.end() );
+   return( v );
+   }
+
+  /// returns the literals of all the clauses, one clause after the other
+  [[nodiscard]] const std::vector< int > & literals( void ) const {
+   return( v_lits );
+   }
+
+  /// returns where each clause starts in literals(), and then its size
+  [[nodiscard]] const std::vector< std::size_t > & starts( void ) const {
+   return( v_start );
+   }
+
+  /// adds a clause after the existing ones
+  void push_back( std::span< const int > c ) {
+   v_lits.insert( v_lits.end() , c.begin() , c.end() );
+   v_start.push_back( v_lits.size() );
+   }
+
+  /// keeps the first m clauses only
+  void truncate( std::size_t m ) {
+   v_lits.resize( v_start[ m ] );
+   v_start.resize( m + 1 );
+   }
+
+  /// removes all the clauses, and frees their memory
+  void clear( void ) {
+   std::vector< int >().swap( v_lits );
+   std::vector< std::size_t >( 1 , 0 ).swap( v_start );
+   }
+
+  private:
+  std::vector< int > v_lits;                    ///< the literals
+  std::vector< std::size_t > v_start = { 0 };   ///< where each clause starts
+  };
 
  using v_Weight = std::vector< double >;  ///< the weights of the clauses
 
@@ -276,6 +400,13 @@ class SATBlock : public Block
 
 /*--------------------- Methods for handling Variable ----------------------*/
  /// generates the ColVariable x and r of the SATBlock
+ /** Generates the ColVariable x and r of the SATBlock. With \p stvv (or,
+  * if it is nullptr, the f_static_variables_Configuration of the
+  * BlockConfig, if any) a SimpleConfiguration< int > of value 1, only the x
+  * are generated, which is all that is needed to fix them, e.g., by an
+  * incremental interface that takes assumptions; the rows of the clauses and
+  * the Objective then cannot be generated (std::logic_error), nor can a
+  * SATBlock with a structure have the x only. */
 
  void generate_abstract_variables( Configuration * stvv = nullptr ) override;
 
@@ -307,9 +438,11 @@ class SATBlock : public Block
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns the clauses, in the DIMACS convention
+ /// returns the clauses, in the DIMACS convention [see Clauses]
 
- [[nodiscard]] c_v_Clause & get_clauses( void ) const { return( v_clauses ); }
+ [[nodiscard]] const Clauses & get_clauses( void ) const {
+  return( v_clauses );
+  }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the weights of the clauses, +INF for the hard ones
@@ -366,6 +499,16 @@ class SATBlock : public Block
  /// returns true if the ColVariable x have been generated
 
  [[nodiscard]] bool has_variables( void ) const { return( AR & HasVar ); }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// returns true if the ColVariable r have been generated
+ /** Returns true if the ColVariable r have been generated, which they are
+  * with the x unless only the x have been asked for [see
+  * generate_abstract_variables()]. */
+
+ [[nodiscard]] bool has_violations( void ) const {
+  return( ( AR & HasVar ) && ( ! f_x_only ) );
+  }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the ColVariable x of the i-th variable, which must exist
@@ -635,11 +778,16 @@ class SATBlock : public Block
  protected:
 
 /*--------------------------- PROTECTED METHODS ----------------------------*/
- /// checks the literals of the clauses and removes the repeated ones
- /** Checks the literals of the clauses from the \p first -th on and removes
-  * the repeated ones. */
+ /// checks the literals of the given clauses and removes the repeated ones
+ /** Checks that the literals of the clauses in \p clauses are those of the
+  * variables of the SATBlock, and removes the repeated ones. */
 
- void normalize_clauses( unsigned int first = 0 );
+ void normalize_clauses( v_Clause & clauses ) const;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// appends the given clauses after the existing ones, freeing them
+
+ void append_clauses( v_Clause && clauses );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// checks the weights of the clauses from the first-th on
@@ -710,7 +858,7 @@ class SATBlock : public Block
 
  unsigned int f_n_var;     ///< number of variables
 
- v_Clause v_clauses;       ///< the clauses, in the DIMACS convention
+ Clauses v_clauses;        ///< the clauses, in the DIMACS convention
 
  v_Weight v_weights;       ///< the weights of the clauses, +INF if hard
 
@@ -739,6 +887,8 @@ class SATBlock : public Block
  std::vector< int > v_group;  ///< the group of each variable, if any
 
  int f_structure;          ///< the structure, a structure_type value
+
+ bool f_x_only = false;    ///< if only the x have been generated
 
  /// the index of each variable in the sub-Block of its group
  std::vector< unsigned int > v_local;

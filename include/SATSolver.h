@@ -32,6 +32,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -640,7 +641,7 @@ class SATSolver : public Solver , public RelaxationSolver
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// gives the SAT solver a clause of the SATBlock
 
- void block_clause( const std::vector< int > & clause );
+ void block_clause( std::span< const int > clause );
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// makes the variables of the SAT solver of those added to the SATBlock

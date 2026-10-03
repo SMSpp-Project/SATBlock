@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- only the x of the abstract representation of a `SATBlock` are generated
+  when `generate_abstract_variables()` gets (directly or as the
+  `f_static_variables_Configuration` of the `BlockConfig`) a
+  `SimpleConfiguration< int >` of value 1, which is all that fixing them as
+  assumptions needs; the clauses added then have no `r`, and the rows and
+  the `Objective` cannot be generated (`has_violations()` tells)
+
 - `SATBlock::add_variables()`, which adds variables of cost 0 after the
   existing ones, their x in the dynamic group `"added x"` of the abstract
   representation and in the `Objective`; a `SATSolver` gives each of them
@@ -87,6 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SATBranchRule::choose()` is given the SATSolver
 
 ### Changed
+
+- the clauses of a `SATBlock` are stored as a single vector of literals
+  and the index where each clause starts (`SATBlock::Clauses`), which takes
+  a fraction of the memory of a vector per clause: `get_clauses()` returns
+  them, the i-th one being a `std::span` of its literals
 
 - a clause turned from soft to hard is given to the SAT solver on top of
   those it has, and only one turned from hard to soft makes the clauses be

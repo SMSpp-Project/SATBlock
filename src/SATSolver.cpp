@@ -334,7 +334,7 @@ void SATSolver::load_clauses( void )
  const auto & clauses = f_sat->get_clauses();
  for( unsigned int i = 0 ; i < clauses.size() ; ++i )
   if( v_hard[ i ] )
-   sat_clause( clauses[ i ] );
+   block_clause( clauses[ i ] );
 
  // what OLL has made goes with the SAT solver it was made in
  v_soft.clear();
@@ -350,7 +350,7 @@ void SATSolver::load_clauses( void )
 
 /*--------------------------------------------------------------------------*/
 
-void SATSolver::block_clause( const std::vector< int > & clause )
+void SATSolver::block_clause( std::span< const int > clause )
 {
  std::vector< int > sc( clause.size() );
  std::transform( clause.begin() , clause.end() , sc.begin() ,
@@ -1013,7 +1013,9 @@ void SATSolver::get_var_solution( Configuration * solc )
 		                      : bool( v_model[ i ] ) ) ? 1 : 0 );
 
  // r is 1 for the soft clauses the solution violates and 0 for the other
- // soft ones, that of a hard clause being fixed to 0
+ // soft ones, that of a hard clause being fixed to 0, if the r are there
+ if( ! f_sat->has_violations() )
+  return;
  const auto & clauses = f_sat->get_clauses();
  for( unsigned int i = 0 ; i < clauses.size() ; ++i ) {
   if( f_sat->is_hard( i ) )  // its r, if any, is fixed to 0
