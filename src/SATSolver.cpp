@@ -101,9 +101,6 @@ void SATSolver::set_par( idx_type par , int value )
   case( intMaxSATHarden ):
    Harden = ( value != 0 );
    break;
-  case( intMaxSATMinAdaptive ):
-   MinAdaptive = ( value != 0 );
-   break;
   case( intMaxIter ):
    MaxIter = std::max( value , 0 );
    break;
@@ -123,8 +120,7 @@ int SATSolver::get_dflt_int_par( idx_type par ) const
   case( intMaxSATRestart ):   return( 0 );
   case( intMaxSATWCE ):       return( 0 );
   case( intMaxSATKeepCores ): return( 0 );
-  case( intMaxSATHarden ):    return( 0 );
-  case( intMaxSATMinAdaptive ): return( 0 );
+  case( intMaxSATHarden ):    return( 1 );
   default:                    return( Solver::get_dflt_int_par( par ) );
   }
  }
@@ -141,7 +137,6 @@ int SATSolver::get_int_par( idx_type par ) const
   case( intMaxSATWCE ):       return( WCE ? 1 : 0 );
   case( intMaxSATKeepCores ): return( KeepCores ? 1 : 0 );
   case( intMaxSATHarden ):    return( Harden ? 1 : 0 );
-  case( intMaxSATMinAdaptive ): return( MinAdaptive ? 1 : 0 );
   case( intMaxIter ):         return( MaxIter );
   default:                    return( Solver::get_int_par( par ) );
   }
@@ -165,8 +160,6 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
   return( intMaxSATKeepCores );
  if( name == "intMaxSATHarden" )
   return( intMaxSATHarden );
- if( name == "intMaxSATMinAdaptive" )
-  return( intMaxSATMinAdaptive );
  return( Solver::int_par_str2idx( name ) );
  }
 
@@ -174,10 +167,9 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
 
 const std::string & SATSolver::int_par_idx2str( idx_type idx ) const
 {
- static const std::array< std::string , 8 > names = { "intMaxSAT" ,
+ static const std::array< std::string , 7 > names = { "intMaxSAT" ,
 		"intMaxSATTrim" , "intMaxSATMinBudget" , "intMaxSATRestart" ,
-		"intMaxSATWCE" , "intMaxSATKeepCores" , "intMaxSATHarden" ,
-		"intMaxSATMinAdaptive" };
+		"intMaxSATWCE" , "intMaxSATKeepCores" , "intMaxSATHarden" };
  if( ( idx >= intMaxSAT ) && ( idx < intLastAlgParSATS ) )
   return( names[ idx - intMaxSAT ] );
  return( Solver::int_par_idx2str( idx ) );
@@ -359,7 +351,6 @@ void SATSolver::load_clauses( void )
  f_oll_clauses = 0;
  f_oll_first = 0;
  f_oll_computes = 0;
- f_min_tried = f_min_removed = f_min_skipped = 0;
  f_next_var = n;
 
  f_reload = false;
@@ -751,15 +742,9 @@ void SATSolver::reduce_core( const std::vector< int > & fixed ,
   core.swap( smaller );
   }
 
- // minimization: each assumption out in turn, within the budget, unless
- // with intMaxSATMinAdaptive it has not paid so far
+ // minimization: each assumption out in turn, within the budget
  if( CoreMinBudget <= 0 )
   return;
- if( MinAdaptive && ( f_min_tried >= 64 ) &&
-     ( 10 * f_min_removed < f_min_tried ) && ( ++f_min_skipped % 16 != 0 ) )
-  return;
- const auto before = core.size();
- f_min_tried += long( before );
  for( std::size_t i = 0 ; ( i < core.size() ) && ( core.size() > 1 ) ; ) {
   if( time_is_up() )
    return;
@@ -770,7 +755,6 @@ void SATSolver::reduce_core( const std::vector< int > & fixed ,
   if( sat_solve( as , CoreMinBudget ) == 20 ) {
    add_cond();
    core.erase( core.begin() + i );  // the rest is a core
-   ++f_min_removed;
    }
   else
    ++i;
@@ -1001,6 +985,12 @@ int SATSolver::oll( const std::vector< int > & fixed )
     cond.push_back( lit );
 
   if( core.empty() ) {
+   // under a hardened assumption, no solution is better than the best one
+   if( std::any_of( cond.begin() , cond.end() , [ & ]( int lit ) {
+	 return( hardened.count( lit ) > 0 ); } ) ) {
+    f_lb = f_ub;
+    return( 10 );
+    }
    // the hard clauses and the fixed variables are unsatisfiable, the
    // clauses OLL adds being implied by the hard ones or only defining new
    // variables

@@ -21,11 +21,13 @@
 /*--------------------------------------------------------------------------*/
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 #include "ColVariableSolution.h"
@@ -1091,6 +1093,28 @@ static void test_oll( void )
   b.unregister_Solvers( true );
   }
 
+ // weights and costs in sevenths, whose sums are rounded: the SAT solver
+ // finds the hardened assumptions unsatisfiable, which makes the best
+ // solution optimal, the optimum being -13/7
+ {
+  SATBlock b;
+  b.load( 5 , { { 1 } , { 5 , -1 } , { 5 , 4 } , { 1 , -3 } ,
+		{ 2 , -4 , -1 } , { -1 , -3 } , { 4 } , { -3 } ,
+		{ -3 , 1 , 4 } } ,
+	  { 2 / 7.0 , 15 / 7.0 , 18 / 7.0 , 2 , inf , 12 / 7.0 , 18 / 7.0 ,
+	    inf , 2 } );
+  b.generate_abstract_variables();
+  const std::vector< double > costs = { 6 / 7.0 , -10 / 7.0 , -1 / 7.0 ,
+					4 / 7.0 , -9 / 7.0 };
+  b.chg_costs( costs , Block::Range( 0 , 5 ) );
+  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+  s->set_par( SATSolver::intMaxSAT , 1 );
+  b.register_Solver( s );
+  assert( s->compute() == Solver::kOK );
+  assert( std::abs( s->get_ub() + 13 / 7.0 ) < 1e-9 );
+  b.unregister_Solvers( true );
+  }
+
  // random instances: n variables, hard and soft clauses of 1 to 3 literals
  std::srand( 12345 );
  unsigned checked = 0 , infeasible = 0;
@@ -1253,15 +1277,14 @@ static void test_oll_incremental( void )
   // as soon as OLL has given it more clauses than in the first compute(),
   // or more than twice as many; half of each third extracts the cores
   // weight-aware, and half of the instances that make a new SAT solver keep
-  // the cores the last compute() relaxed; the hardening and the adaptive
-  // minimization go on and off in turn too
+  // the cores the last compute() relaxed; the hardening goes on and off in
+  // turn too
   auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
   s->set_par( SATSolver::intMaxSAT , 1 );
   s->set_par( SATSolver::intMaxSATRestart , int( t % 3 ) );
   s->set_par( SATSolver::intMaxSATWCE , int( ( t / 3 ) % 2 ) );
   s->set_par( SATSolver::intMaxSATKeepCores , int( ( t / 6 ) % 2 ) );
   s->set_par( SATSolver::intMaxSATHarden , int( ( t / 12 ) % 2 ) );
-  s->set_par( SATSolver::intMaxSATMinAdaptive , int( ( t / 24 ) % 2 ) );
   b.register_Solver( s );
 
   std::vector< int > fixed( n , -1 );  // the value of a fixed x, -1 if not
@@ -1454,6 +1477,42 @@ static void test_x_only( void )
 /*--------------------------------------------------------------------------*/
 /// a depth-first branch and bound on the SATSolver as a RelaxationSolver,
 /// returning the best value found below the current node
+
+static void test_cadical_options( void )
+{
+ // a configuration and options of CaDiCaL, found by name since they are
+ // parameters of CaDiCaLSATSolver alone, and the wrong ones throw
+ SATBlock b;
+ load_string( b , "h 1 2 0\n3 -1 0\n4 -2 0\n2 0\n5 1 -1 0\n" );
+ auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+ const auto cfg = s->str_par_str2idx( "strCaDiCaLConfig" );
+ const auto opt = s->str_par_str2idx( "strCaDiCaLOptions" );
+ bool thrown = false;
+ try { s->set_par( cfg , std::string( "nosuch" ) ); }
+ catch( const std::invalid_argument & ) { thrown = true; }
+ assert( thrown );
+ for( const std::string bad : { "elim" , "elim=" , "elim=x" , "elim=1x" ,
+				"nosuch=1" , "elim=0,,chrono=0" } ) {
+  bool thrown = false;
+  try { s->set_par( opt , std::string( bad ) ); }
+  catch( const std::invalid_argument & ) { thrown = true; }
+  assert( thrown );
+  }
+ s->set_par( cfg , std::string( "unsat" ) );
+ s->set_par( opt , std::string( "elim=0,chrono=0" ) );
+ assert( ( s->get_str_par( cfg ) == "unsat" ) &&
+	 ( s->get_str_par( opt ) == "elim=0,chrono=0" ) );
+ s->set_par( SATSolver::intMaxSAT , 1 );
+ b.register_Solver( s );
+ assert( s->compute() == Solver::kOK );
+ assert( ( s->get_lb() == 5 ) && ( s->get_ub() == 5 ) );
+ b.unregister_Solvers( true );
+
+ std::cout << solver_name << ": a configuration and options of CaDiCaL"
+	   << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
 
 static double dive( SATSolver * s , double incumbent , unsigned & nodes )
 {
@@ -1666,14 +1725,13 @@ static void test_oll_mse( void )
   assert( in );
   SATBlock b;
   b.load( in , 'W' );
-  // the cores extracted as they come, then weight-aware, then with the
-  // hardening and the adaptive minimization
+  // the cores extracted as they come without and with the hardening, then
+  // weight-aware
   for( int wce = 0 ; wce < 3 ; ++wce ) {
    auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
    s->set_par( SATSolver::intMaxSAT , 1 );
    s->set_par( SATSolver::intMaxSATWCE , int( wce == 1 ) );
    s->set_par( SATSolver::intMaxSATHarden , int( wce == 2 ) );
-   s->set_par( SATSolver::intMaxSATMinAdaptive , int( wce == 2 ) );
    s->set_par( Solver::dblMaxTime , 2.0 );
    b.register_Solver( s );
    const int status = s->compute();
@@ -1764,6 +1822,7 @@ int main( int argc , char ** argv )
  test_satlib();
 #ifdef SATBLOCK_HAS_CADICAL
  solver_name = "CaDiCaLSATSolver";
+ test_cadical_options();
  test_solver();
  test_oll();
  test_oll_structure();
