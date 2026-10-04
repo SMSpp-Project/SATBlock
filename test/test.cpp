@@ -1253,12 +1253,15 @@ static void test_oll_incremental( void )
   // as soon as OLL has given it more clauses than in the first compute(),
   // or more than twice as many; half of each third extracts the cores
   // weight-aware, and half of the instances that make a new SAT solver keep
-  // the cores the last compute() relaxed
+  // the cores the last compute() relaxed; the hardening and the adaptive
+  // minimization go on and off in turn too
   auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
   s->set_par( SATSolver::intMaxSAT , 1 );
   s->set_par( SATSolver::intMaxSATRestart , int( t % 3 ) );
   s->set_par( SATSolver::intMaxSATWCE , int( ( t / 3 ) % 2 ) );
   s->set_par( SATSolver::intMaxSATKeepCores , int( ( t / 6 ) % 2 ) );
+  s->set_par( SATSolver::intMaxSATHarden , int( ( t / 12 ) % 2 ) );
+  s->set_par( SATSolver::intMaxSATMinAdaptive , int( ( t / 24 ) % 2 ) );
   b.register_Solver( s );
 
   std::vector< int > fixed( n , -1 );  // the value of a fixed x, -1 if not
@@ -1649,7 +1652,7 @@ static void test_oll_mse( void )
 {
  std::ifstream opt( "../data/wcnf/mse24-small/optima.txt" );
  assert( opt );
- unsigned optimal = 0 , stopped = 0 , wce_optimal = 0;
+ unsigned optimal = 0 , stopped = 0 , wce_optimal = 0 , hard_optimal = 0;
  std::string line;
  while( std::getline( opt , line ) ) {
   if( line.empty() || ( line[ 0 ] == '#' ) )
@@ -1663,11 +1666,14 @@ static void test_oll_mse( void )
   assert( in );
   SATBlock b;
   b.load( in , 'W' );
-  // the cores extracted as they come, then weight-aware
-  for( int wce = 0 ; wce < 2 ; ++wce ) {
+  // the cores extracted as they come, then weight-aware, then with the
+  // hardening and the adaptive minimization
+  for( int wce = 0 ; wce < 3 ; ++wce ) {
    auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
    s->set_par( SATSolver::intMaxSAT , 1 );
-   s->set_par( SATSolver::intMaxSATWCE , wce );
+   s->set_par( SATSolver::intMaxSATWCE , int( wce == 1 ) );
+   s->set_par( SATSolver::intMaxSATHarden , int( wce == 2 ) );
+   s->set_par( SATSolver::intMaxSATMinAdaptive , int( wce == 2 ) );
    s->set_par( Solver::dblMaxTime , 2.0 );
    b.register_Solver( s );
    const int status = s->compute();
@@ -1675,7 +1681,7 @@ static void test_oll_mse( void )
     assert( ( s->get_lb() == z ) && ( s->get_ub() == z ) );
     s->get_var_solution();
     assert( b.is_feasible() && ( b.get_violated_weight() == z ) );
-    ++( wce ? wce_optimal : optimal );
+    ++( wce == 2 ? hard_optimal : ( wce ? wce_optimal : optimal ) );
     }
    else {
     assert( status == Solver::kStopTime );
@@ -1688,7 +1694,8 @@ static void test_oll_mse( void )
   }
  std::cout << solver_name << ": OLL optimal on " << optimal
 	   << " MaxSAT Evaluation instances, stopped by the time on "
-	   << stopped << ", with WCE optimal on " << wce_optimal << std::endl;
+	   << stopped << ", with WCE optimal on " << wce_optimal
+	   << ", hardening " << hard_optimal << std::endl;
  }
 
 /*--------------------------------------------------------------------------*/

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- the parameters `intMaxSATHarden` and `intMaxSATMinAdaptive` of
+  `SATSolver`: OLL hardens the assumptions whose weight is larger than the
+  gap between the best solution and the lower bound, giving them to the SAT
+  solver for the rest of the `compute()` (a core under them is not relaxed
+  again later), and minimizes the cores only while minimizing removes at
+  least a tenth of the assumptions it tries
+
 - only the x of the abstract representation of a `SATBlock` are generated
   when `generate_abstract_variables()` gets (directly or as the
   `f_static_variables_Configuration` of the `BlockConfig`) a

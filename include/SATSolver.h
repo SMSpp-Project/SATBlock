@@ -128,7 +128,21 @@ namespace SMSpp_di_unipi_it
  * *minimized* by deletion, i.e., each of its assumptions is left out in
  * turn and the rest given to the SAT solver with a budget of
  * intMaxSATMinBudget conflicts, the assumption staying out if the rest is
- * found unsatisfiable within the budget.
+ * found unsatisfiable within the budget. With intMaxSATMinAdaptive set to 1
+ * the minimization is skipped while it does not pay: once 64 assumptions
+ * have been tried, a core is minimized only if at least a tenth of those
+ * tried so far with the SAT solver have been removed, and otherwise one
+ * core in 16, so that the rule can change its mind.
+ *
+ * With intMaxSATHarden set to 1 the assumptions are *hardened* as soon as
+ * a solution is known: one whose weight is larger than the gap between the
+ * value of the best solution and the lower bound holds in every solution
+ * better than that, and it is given to the SAT solver for the rest of the
+ * compute() whatever the threshold of the stratification. Since the
+ * weights change from one compute() to the next, it does not become a
+ * clause: a core whose reason has a hardened assumption holds under it,
+ * like one under a fixed variable, and it is not relaxed again by the
+ * following compute().
  *
  * With intMaxSATWCE set to 1 the cores are extracted *weight-aware* (Berg,
  * Jarvisalo, CP 2017): the weights of a core are lowered at once, but the
@@ -334,6 +348,18 @@ class SATSolver : public Solver , public RelaxationSolver
 				* the last compute() relaxed, and those they
 				* are made of, rather than none [see the
 				* class]; 0 (the default) keeps none. */
+  intMaxSATHarden ,            ///< 1 to harden the assumptions of OLL
+                               /**< With 1, an assumption whose weight is
+				* larger than the gap between the best
+				* solution and the lower bound is kept in the
+				* SAT solver for the rest of the compute()
+				* [see the class]; 0 (the default) never. */
+  intMaxSATMinAdaptive ,       ///< 1 to minimize the cores while it pays
+                               /**< With 1, the cores are no longer
+				* minimized while minimizing has removed
+				* less than a tenth of the assumptions tried
+				* [see the class]; 0 (the default) minimizes
+				* them all. */
   intLastAlgParSATS            ///< first new int parameter of derived classes
   };
 
@@ -739,6 +765,14 @@ class SATSolver : public Solver , public RelaxationSolver
  bool WCE = false;             ///< the parameter intMaxSATWCE
 
  bool KeepCores = false;       ///< the parameter intMaxSATKeepCores
+
+ bool Harden = false;          ///< the parameter intMaxSATHarden
+
+ bool MinAdaptive = false;     ///< the parameter intMaxSATMinAdaptive
+
+ /// the assumptions the minimization of the cores has tried, and removed,
+ /// and the cores it has skipped, with this SAT solver
+ long f_min_tried = 0 , f_min_removed = 0 , f_min_skipped = 0;
 
  /// the compute() with OLL done with this SAT solver
  long f_oll_computes = 0;
