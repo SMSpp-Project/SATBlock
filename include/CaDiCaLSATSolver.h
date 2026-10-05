@@ -55,7 +55,11 @@ namespace SMSpp_di_unipi_it
  * strCaDiCaLConfig names one of its configurations (e.g., "sat", "unsat",
  * "plain"), and strCaDiCaLOptions lists its options as comma-separated
  * name=value pairs (e.g., "inprocessing=0,chrono=0"), applied after the
- * configuration. An unknown configuration or option throws in set_par(). */
+ * configuration. An unknown configuration or option throws in set_par().
+ * By default the lucky phases, which CaDiCaL tries at the start of each
+ * solve, are off ("lucky=0"), since OLL asks for many solves with
+ * assumptions and they rarely pay there; an empty strCaDiCaLOptions gives
+ * back all the defaults of CaDiCaL. */
 
 class CaDiCaLSATSolver : public SATSolver
 {
@@ -85,7 +89,7 @@ class CaDiCaLSATSolver : public SATSolver
   strCaDiCaLOptions ,          ///< the options of CaDiCaL
                                /**< Comma-separated name=value pairs, each
 				* given to set() of CaDiCaL after the
-				* configuration; empty by default. */
+				* configuration; "lucky=0" by default. */
   strLastAlgParCaDiCaL         ///< first new string parameter of derived
                                ///< classes
   };
@@ -155,10 +159,11 @@ class CaDiCaLSATSolver : public SATSolver
 
  std::string Config;           ///< the parameter strCaDiCaLConfig
 
- std::string Options;          ///< the parameter strCaDiCaLOptions
+ std::string Options = "lucky=0";  ///< the parameter strCaDiCaLOptions
 
  /// the options of strCaDiCaLOptions, as names and values
- std::vector< std::pair< std::string , int > > v_options;
+ std::vector< std::pair< std::string , int > > v_options =
+  { { "lucky" , 0 } };
 
 /*----------------------- PRIVATE PART OF THE CLASS ------------------------*/
 

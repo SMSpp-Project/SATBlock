@@ -118,8 +118,11 @@ const std::string & CaDiCaLSATSolver::get_dflt_str_par( idx_type par )
  const
 {
  static const std::string empty;
- if( ( par == strCaDiCaLConfig ) || ( par == strCaDiCaLOptions ) )
+ static const std::string options = "lucky=0";
+ if( par == strCaDiCaLConfig )
   return( empty );
+ if( par == strCaDiCaLOptions )
+  return( options );
  return( SATSolver::get_dflt_str_par( par ) );
  }
 

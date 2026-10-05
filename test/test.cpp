@@ -1487,6 +1487,9 @@ static void test_cadical_options( void )
  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
  const auto cfg = s->str_par_str2idx( "strCaDiCaLConfig" );
  const auto opt = s->str_par_str2idx( "strCaDiCaLOptions" );
+ assert( ( s->get_str_par( opt ) == "lucky=0" ) &&
+	 ( s->get_dflt_str_par( opt ) == "lucky=0" ) &&
+	 s->get_str_par( cfg ).empty() );
  bool thrown = false;
  try { s->set_par( cfg , std::string( "nosuch" ) ); }
  catch( const std::invalid_argument & ) { thrown = true; }

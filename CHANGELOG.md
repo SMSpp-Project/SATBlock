@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - the string parameters `strCaDiCaLConfig` and `strCaDiCaLOptions` of
   `CaDiCaLSATSolver`, a configuration of CaDiCaL and a list of name=value
-  options set each time a SAT solver is made
+  options set each time a SAT solver is made, the latter being "lucky=0"
+  by default
 
 - the parameter `intMaxSATHarden` of `SATSolver`, 1 by default: OLL
   hardens the assumptions whose weight is larger than the gap between the
