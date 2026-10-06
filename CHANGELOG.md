@@ -116,6 +116,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `SATBlock::is_feasible( true )` also checks, when the `r` have been
+  generated, that each soft clause the x violate has its `r` at 1, as the
+  row of the clause requires: a `Solution` read before soft clauses were
+  added (their new `r` at 0) was taken as feasible, so that a
+  `LagBFunction` kept its linearization and `LagrangianDualSolver` stopped
+  in `kLowPrecision` below the dual optimum after `add_clauses()`
+
 - `SATSolver::get_ub()` after `kStopTime` gave +INF, while the value of the
   best solution found is what it documents
 - the data archives are extracted by `cmake -E tar`, which also works with

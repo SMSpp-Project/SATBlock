@@ -311,6 +311,16 @@ static void test_soft( void )
   assert( rows_feasible( b ) == b.is_feasible() );
   assert( objective_value( b ) == w );
   }
+
+ // an r left at 0 for a soft clause the x violate, as a point read before
+ // the clause was added has it, makes the abstract point unfeasible, not
+ // the physical one; at 1 it is feasible in both
+ set_values( b , 1 );  // x0 = true, x1 = x2 = false: soft clause 1 violated
+ b.get_violation( 1 ).set_value( 0 );
+ assert( b.is_feasible() && ( ! b.is_feasible( true ) ) );
+ assert( ! rows_feasible( b ) );
+ b.get_violation( 1 ).set_value( 1 );
+ assert( b.is_feasible() && b.is_feasible( true ) && rows_feasible( b ) );
  }
 
 /*--------------------------------------------------------------------------*/

@@ -601,12 +601,15 @@ class SATBlock : public Block
   }
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// returns true if the values of the ColVariable x satisfy the hard clauses
+ /// returns true if the values of the ColVariable satisfy the clauses
  /** Returns true if the current values of the ColVariable x, true when
-  * larger than 1/2, satisfy all the hard clauses, read out of the physical
-  * representation whatever \p useabstract says (the two coincide); the
-  * ColVariable must have been generated, otherwise an exception is
-  * thrown. */
+  * larger than 1/2, satisfy all the hard clauses; with \p useabstract, and
+  * the ColVariable r generated [see has_violations()], also each soft clause
+  * that the x violate must have its r larger than 1/2, as the row of the
+  * clause in the abstract representation requires, so that a point whose r
+  * do not follow its x (e.g., one read before soft clauses were added, with
+  * their new r at 0) is not feasible there. The ColVariable must have been
+  * generated, otherwise an exception is thrown. */
 
  bool is_feasible( bool useabstract = false ,
 		   Configuration * fsbc = nullptr ) override;

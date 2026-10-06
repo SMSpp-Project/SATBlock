@@ -834,13 +834,23 @@ bool SATBlock::is_feasible( bool useabstract , Configuration * fsbc )
   throw( std::logic_error( "SATBlock::is_feasible: the ColVariable have "
 			   "not been generated" ) );
 
- for( unsigned int i = 0 ; i < v_clauses.size() ; ++i )
-  if( is_hard( i ) &&
-      std::none_of( v_clauses[ i ].begin() , v_clauses[ i ].end() ,
-		    [ this ]( int lit ) {
+ // the abstract representation also has the rows of the soft clauses, each
+ // satisfied by the x or by its r: an r left at 0 for a soft clause the x
+ // violate, e.g., that of a clause added after the values were read, makes
+ // the abstract point unfeasible, whatever the physical one is
+ const bool chk_r = useabstract && has_violations();
+ for( unsigned int i = 0 ; i < v_clauses.size() ; ++i ) {
+  if( ( ! is_hard( i ) ) && ( ! chk_r ) )
+   continue;
+  if( is_tautology( i ) ||
+      std::any_of( v_clauses[ i ].begin() , v_clauses[ i ].end() ,
+		   [ this ]( int lit ) {
        return( ( var( std::abs( lit ) - 1 ).get_value() > 0.5 ) ==
 		( lit > 0 ) ); } ) )
+   continue;
+  if( is_hard( i ) || ( violation( i ).get_value() < 0.5 ) )
    return( false );
+  }
 
  return( true );
  }
