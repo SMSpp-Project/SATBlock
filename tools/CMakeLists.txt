@@ -29,9 +29,16 @@ add_executable(satgen satgen.cpp)
 set_target_properties(satgen PROPERTIES OUTPUT_NAME smspp_satgen)
 target_link_libraries(satgen PRIVATE SMS++::SATBlock)
 
+# ----- satpart ------------------------------------------------------------- #
+# the variables of an instance dealt out to groups, the communities of its
+# variable incidence graph, for the structures of a SATBlock
+add_executable(satpart satpart.cpp)
+set_target_properties(satpart PROPERTIES OUTPUT_NAME smspp_satpart)
+target_link_libraries(satpart PRIVATE SMS++::SATBlock)
+
 # ----- Install instructions ------------------------------------------------ #
 include(GNUInstallDirs)
-install(TARGETS satgen
+install(TARGETS satgen satpart
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # ----- Tests --------------------------------------------------------------- #
@@ -43,4 +50,12 @@ if (BUILD_TESTING)
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/satgen_seed.cmake
              WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(satgen_seed PROPERTIES LABELS SATBlock)
+    # the groups of satgen found again
+    add_test(NAME satpart_groups
+             COMMAND ${CMAKE_COMMAND}
+                     -DSATGEN=$<TARGET_FILE:satgen>
+                     -DSATPART=$<TARGET_FILE:satpart>
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/satpart_groups.cmake
+             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(satpart_groups PROPERTIES LABELS SATBlock)
 endif ()

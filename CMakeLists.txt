@@ -81,7 +81,7 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 # With the BUILD_SHARED_LIBS variable we can specify if the library will
 # be STATIC or SHARED, so no reason to do it now.
 add_library(${modName})
-target_compile_features(${modName} PUBLIC cxx_std_17)
+target_compile_features(${modName} PUBLIC cxx_std_20)
 
 # The name of the shared library carries the version of its binary interface,
 # which any minor release may change while the major version is 0, and then
@@ -214,6 +214,49 @@ target_link_libraries(${modName} PUBLIC ${modNamespace}::SMS++)
 # the library with this notation.
 add_library(${modNamespace}::${modName} ALIAS ${modName})
 
+# ----- SATBlockML ---------------------------------------------------------- #
+# The learned SATBranchRule (GQSATBranchRule) is a library of its own, built
+# only if Torch is found: Torch is some hundreds of megabytes of shared
+# objects, which a program that does not use that rule should not load.
+# Whoever wants it links SMS++::SATBlockML, which brings this one along.
+find_package(Torch QUIET HINTS ${Torch_ROOT})
+if (Torch_FOUND)
+    message(STATUS "${modName}: Torch found, configuring ${modName}ML")
+
+    add_library(${modName}ML)
+    target_compile_features(${modName}ML PUBLIC cxx_std_20)
+    set_target_properties(${modName}ML PROPERTIES
+            VERSION ${PROJECT_VERSION}
+            SOVERSION ${soVersion})
+
+    # the rule registers itself from a static initialiser, as the classes
+    # of the module do [see above]
+    if (BUILD_SHARED_LIBS)
+        if (MSVC)
+            target_link_options(${modName}ML INTERFACE
+                    "/INCLUDE:SMSpp_force_load_${modName}ML")
+        elseif (UNIX AND (NOT APPLE))
+            target_link_options(${modName}ML INTERFACE "LINKER:--no-as-needed")
+        endif ()
+    endif ()
+
+    target_sources(${modName}ML PRIVATE src/GQSATBranchRule.cpp)
+
+    target_include_directories(
+            ${modName}ML PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+            $<INSTALL_INTERFACE:include/${modNamespace}>)
+
+    separate_arguments(TORCH_CXX_FLAGS_LIST UNIX_COMMAND "${TORCH_CXX_FLAGS}")
+    target_compile_options(${modName}ML PRIVATE ${TORCH_CXX_FLAGS_LIST})
+    target_link_libraries(${modName}ML PUBLIC ${modName} ${TORCH_LIBRARIES})
+
+    add_library(${modNamespace}::${modName}ML ALIAS ${modName}ML)
+else ()
+    message(STATUS "${modName}ML: Torch not found, not built")
+endif ()
+
 # ----- Data ---------------------------------------------------------------- #
 # The instances the tests read, in two archives of the GitLab Package
 # Registry: cnf.tgz, a selection of the SATLIB collection, and wcnf.tgz, the
@@ -228,12 +271,6 @@ add_library(${modNamespace}::${modName} ALIAS ${modName})
 # of the CI, or a clone that has been extracted before) downloads and extracts
 # again instead of taking them for the current ones.
 set(DATA_VERSION 2026-09-26)
-
-if (UNIX)
-    set(TAR_FLAGS --warning=no-unknown-keyword -xzf)
-elseif (WIN32)
-    set(TAR_FLAGS xzf)
-endif ()
 
 set(DATA_MARKERS)
 foreach (fmt cnf wcnf)
@@ -269,7 +306,7 @@ endif()
 
     add_custom_command(
             OUTPUT ${marker}
-            COMMAND tar ${TAR_FLAGS} ${archive}
+            COMMAND ${CMAKE_COMMAND} -E tar xzf ${archive}
             COMMAND ${CMAKE_COMMAND} -E touch ${marker}
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
             COMMENT "Extracting ${fmt}.tgz"
@@ -302,16 +339,31 @@ add_subdirectory(tools)
 
 include(GNUInstallDirs)
 
-# Install the library
+# Install the library; SATBlockML goes in the same export set, so that a
+# consumer finding this module gets SMS++::SATBlockML too when it was built
+if (Torch_FOUND)
+    install(TARGETS ${modName}ML
+            EXPORT ${modName}Targets
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} # .dll
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} # .so .dylib
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}) # .lib
+endif ()
+
 install(TARGETS ${modName}
         EXPORT ${modName}Targets
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} # .dll
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} # .so .dylib
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}) # .lib
 
-# Install the headers
-install(DIRECTORY include/
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${modNamespace})
+# Install the headers, that of SATBlockML only if it is built
+if (Torch_FOUND)
+    install(DIRECTORY include/
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${modNamespace})
+else ()
+    install(DIRECTORY include/
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${modNamespace}
+            PATTERN "GQSATBranchRule.h" EXCLUDE)
+endif ()
 
 # Install the auto-generated configuration header (see above).
 install(FILES ${PROJECT_BINARY_DIR}/${modName}Config.h

@@ -6,8 +6,9 @@
  * hand-made cases and on an instance of the SATLIB collection, the abstract
  * representation, the feasibility check and the violated weight, the
  * Solution, the round trips through netCDF and through the writer, the
- * changes of the weights and the added clauses, and the SATSolver, OLL
- * included, on random instances and on instances of the MaxSAT Evaluation.
+ * changes of the weights and the added clauses, the structures out of the
+ * groups of the variables, and the SATSolver, OLL included, on random
+ * instances and on instances of the MaxSAT Evaluation.
  *
  * \author Donato Meoli \n
  *         Dipartimento di Informatica \n
@@ -20,11 +21,13 @@
 /*--------------------------------------------------------------------------*/
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 #include "ColVariableSolution.h"
@@ -51,6 +54,13 @@ using namespace SMSpp_di_unipi_it;
 /*--------------------------------------------------------------------------*/
 
 /// loads a SATBlock out of a string in the given format
+
+static bool same( std::span< const int > a , const SATBlock::Clause & b )
+{
+ return( std::equal( a.begin() , a.end() , b.begin() , b.end() ) );
+ }
+
+/*--------------------------------------------------------------------------*/
 
 static void load_string( SATBlock & b , const std::string & text ,
 			 char frmt = 0 )
@@ -80,9 +90,9 @@ static bool load_throws( const std::string & text , char frmt = 0 )
 
 static void set_values( SATBlock & b , unsigned long mask )
 {
- auto & x = b.get_variables();
- for( unsigned int i = 0 ; i < x.size() ; ++i )
-  x[ i ].set_value( ( mask >> i ) & 1 );
+ if( b.has_variables() )
+  for( unsigned int i = 0 ; i < b.get_number_variables() ; ++i )
+   b.var( i ).set_value( ( mask >> i ) & 1 );
  for( unsigned int c = 0 ; c < b.get_number_clauses() ; ++c ) {
   const auto & cl = b.get_clauses()[ c ];
   const bool sat = std::any_of( cl.begin() , cl.end() , [ mask ]( int l ) {
@@ -144,10 +154,10 @@ static void test_load( void )
  assert( b.get_number_variables() == 3 );
  assert( b.get_number_clauses() == 5 );
  const auto & c = b.get_clauses();
- assert( ( c[ 0 ] == SATBlock::Clause{ 1 , -2 } ) &&
-	 ( c[ 1 ] == SATBlock::Clause{ 2 , 3 , -1 } ) &&
-	 ( c[ 2 ] == SATBlock::Clause{ 3 , -2 } ) &&
-	 ( c[ 3 ] == SATBlock::Clause{ 1 , -1 , 2 } ) && c[ 4 ].empty() );
+ assert( ( same( c[ 0 ] , SATBlock::Clause{ 1 , -2 } ) ) &&
+	 ( same( c[ 1 ] , SATBlock::Clause{ 2 , 3 , -1 } ) ) &&
+	 ( same( c[ 2 ] , SATBlock::Clause{ 3 , -2 } ) ) &&
+	 ( same( c[ 3 ] , SATBlock::Clause{ 1 , -1 , 2 } ) ) && c[ 4 ].empty() );
  assert( b.is_tautology( 3 ) && ! b.is_tautology( 0 ) );
 
  // reading stops at the m-th clause and at a line beginning with '%'
@@ -188,7 +198,7 @@ static void test_load_wcnf( void )
  assert( ( o.get_number_variables() == 3 ) &&
 	 ( o.get_number_clauses() == 4 ) );
  assert( ( o.get_weights() == SATBlock::v_Weight{ inf , 3 , 7 , inf } ) );
- assert( ( o.get_clauses()[ 2 ] == SATBlock::Clause{ -1 , 3 } ) );
+ assert( ( same( o.get_clauses()[ 2 ] , SATBlock::Clause{ -1 , 3 } ) ) );
  assert( o.is_hard( 0 ) && ! o.is_hard( 1 ) && ! o.all_hard() );
 
  // up to 2021, without top: all soft
@@ -301,6 +311,16 @@ static void test_soft( void )
   assert( rows_feasible( b ) == b.is_feasible() );
   assert( objective_value( b ) == w );
   }
+
+ // an r left at 0 for a soft clause the x violate, as a point read before
+ // the clause was added has it, makes the abstract point unfeasible, not
+ // the physical one; at 1 it is feasible in both
+ set_values( b , 1 );  // x0 = true, x1 = x2 = false: soft clause 1 violated
+ b.get_violation( 1 ).set_value( 0 );
+ assert( b.is_feasible() && ( ! b.is_feasible( true ) ) );
+ assert( ! rows_feasible( b ) );
+ b.get_violation( 1 ).set_value( 1 );
+ assert( b.is_feasible() && b.is_feasible( true ) && rows_feasible( b ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -379,6 +399,306 @@ static void test_round_trips( void )
  assert( ( q.get_number_variables() == 4 ) &&
 	 ( q.get_clauses() == w.get_clauses() ) &&
 	 ( q.get_weights() == w.get_weights() ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+/// a random instance of n variables in groups: clauses of 1 to 3 literals,
+/// some hard, some tautologies, an empty one now and then, costs of either
+/// sign, and groups among 0 to G - 1, some of which may be empty
+
+static void random_grouped( SATBlock & b , unsigned n , unsigned G )
+{
+ const auto inf = Inf< double >();
+ const unsigned m = n + std::rand() % ( 3 * n );
+ SATBlock::v_Clause clauses( m );
+ SATBlock::v_Weight weights( m );
+ for( unsigned c = 0 ; c < m ; ++c ) {
+  if( std::rand() % 40 ) {  // the empty clause otherwise
+   const unsigned len = 1 + std::rand() % 3;
+   for( unsigned l = 0 ; l < len ; ++l )
+    clauses[ c ].push_back( ( 1 + std::rand() % n ) *
+			    ( std::rand() % 2 ? 1 : -1 ) );
+   }
+  weights[ c ] = ( std::rand() % 3 == 0 ) ? inf : 1 + std::rand() % 20;
+  }
+ b.load( n , std::move( clauses ) , std::move( weights ) );
+
+ std::vector< double > costs( n );
+ for( auto & c : costs )
+  c = int( std::rand() % 21 ) - 10;
+ b.chg_costs( costs , Block::Range( 0 , n ) );
+
+ std::vector< int > groups( n );
+ for( auto & g : groups )
+  g = std::rand() % G;
+ b.set_variable_groups( std::move( groups ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+/// a SATBlock with the instance of u and the structure type
+
+static void load_structured( SATBlock & b , const SATBlock & u , int type )
+{
+ const auto n = u.get_number_variables();
+ b.load( n , u.get_clauses().to_vectors() ,
+	 SATBlock::v_Weight( u.get_weights() ) );
+ b.chg_costs( u.get_costs() , Block::Range( 0 , n ) );
+ b.set_variable_groups( std::vector< int >( u.get_variable_groups() ) );
+ SimpleConfiguration< int > strc( type );
+ b.set_structure( & strc );
+ }
+
+/*--------------------------------------------------------------------------*/
+/// gives b, which has a structure, the values that u, the same instance
+/// without it, has: the x of the sub-Block, the copies equal to their
+/// originals, and each r as the one of its clause in u
+
+static void set_structured_values( SATBlock & b , const SATBlock & u )
+{
+ for( unsigned int i = 0 ; i < b.get_number_variables() ; ++i )
+  b.var( i ).set_value( u.var( i ).get_value() );
+
+ if( b.get_structure_type() == SATBlock::kDecomposition )
+  for( const auto & row : b.get_linking_constraints() ) {
+   auto lf = static_cast< const LinearFunction * >(
+				   const_cast< FRowConstraint & >( row ).get_function() );
+   ColVariable * copy = nullptr;
+   double value = 0;
+   for( unsigned int k = 0 ; k < 2 ; ++k ) {
+    auto x = static_cast< ColVariable * >( lf->get_active_var( k ) );
+    if( lf->get_coefficient( k ) > 0 )
+     copy = x;
+    else
+     value = x->get_value();
+    }
+   copy->set_value( value );
+   }
+
+ for( unsigned int c = 0 ; c < b.get_number_clauses() ; ++c ) {
+  if( b.is_hard( c ) && b.is_linking( c ) &&
+      ( b.get_structure_type() == SATBlock::kRelaxation ) ) {
+   bool threw = false;  // a hard linking clause of the relaxation has no r
+   try { (void) b.get_violation( c ); }
+   catch( std::logic_error & ) { threw = true; }
+   assert( threw );
+   continue;
+   }
+  auto & r = b.get_violation( c );
+  if( ! r.is_fixed() )
+   r.set_value( u.get_violation( c ).get_value() );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+/// the same random change to u, without a structure, and to b, with one: the
+/// costs of some variables, the weights of some clauses (a linking clause of
+/// kRelaxation staying hard or soft) or a clause inside a group added
+
+static void random_change( SATBlock & u , SATBlock & b )
+{
+ const auto inf = Inf< double >();
+ const unsigned n = u.get_number_variables();
+ switch( std::rand() % 3 ) {
+  case( 0 ): {
+   std::vector< double > c( n );
+   for( auto & ci : c )
+    ci = int( std::rand() % 21 ) - 10;
+   u.chg_costs( c , Block::Range( 0 , n ) );
+   b.chg_costs( c , Block::Range( 0 , n ) );
+   break;
+   }
+  case( 1 ): {
+   Block::Subset nms;
+   std::vector< double > w;
+   for( unsigned i = 0 ; i < u.get_number_clauses() ; ++i )
+    if( std::rand() % 3 == 0 ) {
+     double wi = ( std::rand() % 3 == 0 ) ? inf : 1 + std::rand() % 20;
+     if( b.is_linking( i ) &&
+	 ( b.get_structure_type() == SATBlock::kRelaxation ) )
+      wi = u.is_hard( i ) ? inf : 1 + std::rand() % 20;
+     nms.push_back( i );
+     w.push_back( wi );
+     }
+   u.chg_weights( w , Block::Subset( nms ) );
+   b.chg_weights( w , std::move( nms ) );
+   break;
+   }
+  default: {  // a clause on the variables of the group of the first one
+   const auto & g = u.get_variable_groups();
+   const int v0 = std::rand() % n;
+   SATBlock::Clause cl{ ( v0 + 1 ) * ( std::rand() % 2 ? 1 : -1 ) };
+   for( unsigned v = 0 ; v < n ; ++v )
+    if( ( g[ v ] == g[ v0 ] ) && ( int( v ) != v0 ) &&
+	( std::rand() % 3 == 0 ) )
+     cl.push_back( int( v + 1 ) * ( std::rand() % 2 ? 1 : -1 ) );
+   const double w = ( std::rand() % 3 == 0 ) ? inf : 1 + std::rand() % 20;
+   u.add_clauses( { cl } , { w } );
+   b.add_clauses( { cl } , { w } );
+   }
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+/// the structures against the SATBlock without them, on all the assignments
+/// of random instances, and the cases that must throw
+
+static void test_structure( void )
+{
+ // what must throw
+ {
+  SATBlock b;
+  load_string( b , "p cnf 3 2\n1 2 0\n-2 3 0\n" );
+  SimpleConfiguration< int > relax( SATBlock::kRelaxation );
+  SimpleConfiguration< double > wrong( 1 );
+  SimpleConfiguration< int > unknown( 3 );
+  bool threw = false;
+  try { b.set_structure( & relax ); }  // no groups
+  catch( std::logic_error & ) { threw = true; }
+  assert( threw );
+  threw = false;
+  try { b.set_variable_groups( { 0 , 1 } ); }  // one group too few
+  catch( std::invalid_argument & ) { threw = true; }
+  assert( threw );
+  threw = false;
+  try { b.set_variable_groups( { 0 , -1 , 1 } ); }
+  catch( std::invalid_argument & ) { threw = true; }
+  assert( threw );
+  b.set_variable_groups( { 0 , 0 , 1 } );
+  threw = false;
+  try { b.set_structure( & wrong ); }
+  catch( std::invalid_argument & ) { threw = true; }
+  assert( threw );
+  threw = false;
+  try { b.set_structure( & unknown ); }
+  catch( std::invalid_argument & ) { threw = true; }
+  assert( threw );
+  b.set_structure();  // nobody is choosing: nothing happens
+  assert( b.get_structure_type() == SATBlock::kNoStructure );
+
+  b.set_structure( & relax );
+  assert( ( b.get_structure_type() == SATBlock::kRelaxation ) &&
+	  ( b.get_nested_Blocks().size() == 2 ) );
+  assert( ( ! b.is_linking( 0 ) ) && b.is_linking( 1 ) );
+  threw = false;
+  try { b.set_variable_groups( { 0 , 0 , 0 } ); }
+  catch( std::logic_error & ) { threw = true; }
+  assert( threw );
+  // the hard linking clause 1 cannot turn soft, since its r would have to
+  // appear, nor can a linking clause be added, and nothing changes
+  std::vector< double > w = { 1 };
+  threw = false;
+  try { b.chg_weights( w , Block::Range( 1 , 2 ) ); }
+  catch( std::logic_error & ) { threw = true; }
+  assert( threw && b.is_hard( 1 ) );
+  threw = false;
+  try { b.add_clauses( { { 1 } , { -1 , 3 } } ); }
+  catch( std::logic_error & ) { threw = true; }
+  assert( threw && ( b.get_number_clauses() == 2 ) );
+  // a clause of a group and a cost go to the sub-Block
+  b.add_clauses( { { -3 } } , { 4 } );
+  b.chg_costs( w , Block::Range( 2 , 3 ) );
+  auto & sub1 = *static_cast< SATBlock * >( b.get_nested_Blocks()[ 1 ] );
+  assert( ( sub1.get_number_clauses() == 1 ) &&
+	  ( sub1.get_weights()[ 0 ] == 4 ) && ( sub1.get_costs()[ 0 ] == 1 ) );
+
+  // back to no structure and to the other one, before the abstract
+  // representation; after it, no more
+  SimpleConfiguration< int > none( SATBlock::kNoStructure );
+  b.set_structure( & none );
+  assert( b.get_nested_Blocks().empty() );
+  SimpleConfiguration< int > dec( SATBlock::kDecomposition );
+  b.set_structure( & dec );
+  b.generate_abstract_variables();
+  threw = false;
+  try { b.set_structure( & relax ); }
+  catch( std::logic_error & ) { threw = true; }
+  assert( threw );
+
+  // the groups go through netCDF, the structure does not
+  const char * file = "SATBlock_unit_test.nc4";
+  {
+   netCDF::NcFile f( file , netCDF::NcFile::replace );
+   auto g = f.addGroup( "Block" );
+   b.serialize( g );
+   }
+  {
+   netCDF::NcFile f( file , netCDF::NcFile::read );
+   auto d = Block::new_Block( f.getGroup( "Block" ) );
+   auto s = dynamic_cast< SATBlock * >( d );
+   assert( s && ( s->get_variable_groups() == b.get_variable_groups() ) &&
+	   ( s->get_structure_type() == SATBlock::kNoStructure ) );
+   delete d;
+   }
+  std::remove( file );
+  }
+
+ // random instances, against the SATBlock without a structure on all the
+ // assignments: the rows of the sub-Block and of the father are all
+ // satisfied exactly when the hard clauses are, and the Objective of the
+ // sub-Block add up to the MaxSAT objective
+ std::srand( 4242 );
+ unsigned checked = 0 , linking = 0;
+ for( unsigned t = 0 ; t < 200 ; ++t ) {
+  const unsigned n = 3 + std::rand() % 8;   // 3 to 10 variables
+  SATBlock u;
+  random_grouped( u , n , 1 + std::rand() % 4 );
+  u.generate_abstract_constraints();
+  u.generate_objective();
+  const auto P = unsigned( *std::max_element(
+		   u.get_variable_groups().begin() ,
+		   u.get_variable_groups().end() ) ) + 1;
+
+  for( int type : { SATBlock::kRelaxation , SATBlock::kDecomposition } ) {
+   SATBlock b;
+   load_structured( b , u , type );
+   b.generate_abstract_constraints();
+   b.generate_objective();
+   assert( b.get_nested_Blocks().size() == P );
+   for( unsigned c = 0 ; c < b.get_number_clauses() ; ++c )
+    linking += b.is_linking( c );
+
+   // the instance as it is, then after each of 3 changes, with the same
+   // changes done to a copy of u
+   SATBlock uc;
+   uc.load( n , u.get_clauses().to_vectors() ,
+	    SATBlock::v_Weight( u.get_weights() ) );
+   uc.chg_costs( u.get_costs() , Block::Range( 0 , n ) );
+   uc.set_variable_groups( std::vector< int >( u.get_variable_groups() ) );
+   uc.generate_abstract_constraints();
+   uc.generate_objective();
+   for( unsigned round = 0 ; round < 4 ; ++round ) {
+   if( round )
+    random_change( uc , b );
+   for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
+    set_values( uc , mask );
+    set_structured_values( b , uc );
+
+    bool rows = true;
+    double obj = objective_value( b );
+    assert( obj == 0 );  // the father has no terms
+    for( auto sub : b.get_nested_Blocks() ) {
+     auto & s = *static_cast< SATBlock * >( sub );
+     rows = rows_feasible( s ) && rows;
+     obj += objective_value( s );
+     }
+    for( auto & row : const_cast< std::vector< FRowConstraint > & >(
+					    b.get_linking_constraints() ) ) {
+     row.compute();
+     rows = row.feasible() && rows;
+     }
+    assert( rows == uc.is_feasible() );
+    assert( b.is_feasible() == uc.is_feasible() );
+    assert( b.get_objective_value() == uc.get_objective_value() );
+    if( uc.is_feasible() )
+     assert( obj == uc.get_objective_value() );
+    }
+    }
+   ++checked;
+   }
+  }
+ std::cout << "SATBlock: both structures equal to the SATBlock on all the "
+	   << "assignments of " << checked << " cases, 3 changes each ("
+	   << linking << " linking clauses)" << std::endl;
  }
 
 /*--------------------------------------------------------------------------*/
@@ -505,7 +825,8 @@ static void test_modifications( void )
  const auto & lc = b.get_added_clause_constraints();
  assert( ( b.get_number_clauses() == 7 ) && ( lc.size() == 2 ) );
  assert( b.get_dynamic_constraint_groups().size() == 1 );
- assert( b.get_dynamic_variable_groups().size() == 1 );
+ // "added r" and "added x"
+ assert( b.get_dynamic_variable_groups().size() == 2 );
  assert( ( ! b.get_violation( 5 ).is_fixed() ) &&
 	 b.get_violation( 6 ).is_fixed() );
  // the 7 r and the 2 x, the terms found by their variable
@@ -542,6 +863,25 @@ static void test_modifications( void )
   thrown = true;
   }
  assert( thrown && b.is_hard( 0 ) );
+
+ // 2 variables added: their x in "added x" and in the Objective with cost
+ // 0, then a clause on them and a cost, which the MILP formulation follows
+ b.add_variables( 2 );
+ assert( ( b.get_number_variables() == 4 ) &&
+	 ( b.get_variables().size() == 2 ) &&
+	 ( obj->get_num_active_var() == 11 ) &&
+	 ( obj->get_coefficient( obj->is_active( & b.var( 3 ) ) ) == 0 ) );
+ b.add_clauses( { { -3 , 4 } } , { 5 } );
+ std::vector< double > c4 = { 7 };
+ b.chg_costs( c4 , Block::Range( 3 , 4 ) );
+ assert( ( b.get_costs()[ 3 ] == 7 ) &&
+	 ( obj->get_coefficient( obj->is_active( & b.var( 3 ) ) ) == 7 ) );
+ for( unsigned long mask = 0 ; mask < 16 ; ++mask ) {
+  set_values( b , mask );
+  assert( rows_feasible( b ) == b.is_feasible() );
+  assert( objective_value( b ) == b.get_violated_weight() +
+	  ( ( mask >> 3 ) & 1 ) * 7 );
+  }
  }
 
 /*--------------------------------------------------------------------------*/
@@ -763,6 +1103,28 @@ static void test_oll( void )
   b.unregister_Solvers( true );
   }
 
+ // weights and costs in sevenths, whose sums are rounded: the SAT solver
+ // finds the hardened assumptions unsatisfiable, which makes the best
+ // solution optimal, the optimum being -13/7
+ {
+  SATBlock b;
+  b.load( 5 , { { 1 } , { 5 , -1 } , { 5 , 4 } , { 1 , -3 } ,
+		{ 2 , -4 , -1 } , { -1 , -3 } , { 4 } , { -3 } ,
+		{ -3 , 1 , 4 } } ,
+	  { 2 / 7.0 , 15 / 7.0 , 18 / 7.0 , 2 , inf , 12 / 7.0 , 18 / 7.0 ,
+	    inf , 2 } );
+  b.generate_abstract_variables();
+  const std::vector< double > costs = { 6 / 7.0 , -10 / 7.0 , -1 / 7.0 ,
+					4 / 7.0 , -9 / 7.0 };
+  b.chg_costs( costs , Block::Range( 0 , 5 ) );
+  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+  s->set_par( SATSolver::intMaxSAT , 1 );
+  b.register_Solver( s );
+  assert( s->compute() == Solver::kOK );
+  assert( std::abs( s->get_ub() + 13 / 7.0 ) < 1e-9 );
+  b.unregister_Solvers( true );
+  }
+
  // random instances: n variables, hard and soft clauses of 1 to 3 literals
  std::srand( 12345 );
  unsigned checked = 0 , infeasible = 0;
@@ -822,6 +1184,539 @@ static void test_oll( void )
  }
 
 /*--------------------------------------------------------------------------*/
+/// OLL on a SATBlock with a structure, which reads the whole instance and
+/// writes the solution into the x of the sub-Block
+
+static void test_oll_structure( void )
+{
+ const auto inf = Inf< double >();
+ std::srand( 777 );
+ unsigned checked = 0;
+ for( unsigned t = 0 ; t < 100 ; ++t ) {
+  const unsigned n = 3 + std::rand() % 8;
+  SATBlock u;
+  random_grouped( u , n , 1 + std::rand() % 4 );
+  u.generate_abstract_variables();
+  double best = inf;
+  for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
+   set_values( u , mask );
+   if( u.is_feasible() )
+    best = std::min( best , u.get_objective_value() );
+   }
+
+  const double best0 = best;
+  for( int type : { SATBlock::kRelaxation , SATBlock::kDecomposition } ) {
+   SATBlock b;
+   load_structured( b , u , type );
+   b.generate_abstract_constraints();
+   best = best0;
+
+   SATBlock uc;
+   uc.load( n , u.get_clauses().to_vectors() ,
+	    SATBlock::v_Weight( u.get_weights() ) );
+   uc.chg_costs( u.get_costs() , Block::Range( 0 , n ) );
+   uc.set_variable_groups( std::vector< int >( u.get_variable_groups() ) );
+   uc.generate_abstract_variables();
+
+   // the instance, then 3 changes, the same SATSolver reoptimizing
+   auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+   s->set_par( SATSolver::intMaxSAT , 1 );
+   b.register_Solver( s );
+   for( unsigned round = 0 ; round < 4 ; ++round ) {
+    if( round ) {
+     random_change( uc , b );
+     best = inf;
+     for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
+      set_values( uc , mask );
+      if( uc.is_feasible() )
+       best = std::min( best , uc.get_objective_value() );
+      }
+     }
+    const int status = s->compute();
+    if( best == inf )
+     assert( status == Solver::kInfeasible );
+    else {
+     assert( ( status == Solver::kOK ) && ( s->get_ub() == best ) );
+     s->get_var_solution();
+     assert( b.is_feasible() && ( b.get_objective_value() == best ) );
+     }
+    }
+   b.unregister_Solvers( true );
+   ++checked;
+   }
+  }
+ std::cout << solver_name << ": OLL optimal on " << checked
+	   << " random instances with a structure, 3 changes each"
+	   << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
+/// the same OLL through a sequence of Modification, against the enumeration
+
+static void test_oll_incremental( void )
+{
+ const auto inf = Inf< double >();
+
+ std::srand( 54321 );
+ unsigned steps = 0 , infeasible = 0;
+ for( unsigned t = 0 ; t < 60 ; ++t ) {
+  unsigned n = 4 + std::rand() % 7;  // 4 to 10 variables, then up to 12
+  auto rnd_clause = [ & n ]( void ) {
+   SATBlock::Clause cl;
+   const unsigned len = 1 + std::rand() % 3;
+   for( unsigned l = 0 ; l < len ; ++l )
+    cl.push_back( int( 1 + std::rand() % n ) * ( std::rand() % 2 ? 1 : -1 ) );
+   return( cl );
+   };
+  auto rnd_weight = [ inf ]( void ) {
+   return( ( std::rand() % 4 == 0 ) ? inf : double( 1 + std::rand() % 20 ) );
+   };
+
+  const unsigned m = n + std::rand() % ( 2 * n );
+  SATBlock::v_Clause clauses( m );
+  SATBlock::v_Weight weights( m );
+  for( unsigned c = 0 ; c < m ; ++c ) {
+   clauses[ c ] = rnd_clause();
+   weights[ c ] = rnd_weight();
+   }
+  SATBlock b;
+  b.load( n , std::move( clauses ) , std::move( weights ) );
+  b.generate_abstract_variables();
+
+  // a third of the instances never makes a new SAT solver, the others do
+  // as soon as OLL has given it more clauses than in the first compute(),
+  // or more than twice as many; half of each third extracts the cores
+  // weight-aware, and half of the instances that make a new SAT solver keep
+  // the cores the last compute() relaxed; the hardening goes on and off in
+  // turn too
+  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+  s->set_par( SATSolver::intMaxSAT , 1 );
+  s->set_par( SATSolver::intMaxSATRestart , int( t % 3 ) );
+  s->set_par( SATSolver::intMaxSATWCE , int( ( t / 3 ) % 2 ) );
+  s->set_par( SATSolver::intMaxSATKeepCores , int( ( t / 6 ) % 2 ) );
+  s->set_par( SATSolver::intMaxSATHarden , int( ( t / 12 ) % 2 ) );
+  b.register_Solver( s );
+
+  std::vector< int > fixed( n , -1 );  // the value of a fixed x, -1 if not
+  for( unsigned step = 0 ; step < 15 ; ++step ) {
+   // the first compute() on the instance as it is, then a Modification
+   // before each of the others: mostly new costs, as the Lagrangian term of
+   // a decomposition gives, then weights changed (a clause possibly turning
+   // hard or soft), clauses added, variables added with a clause on each of
+   // them, a variable fixed or all of them unfixed
+   if( step > 0 )
+    switch( std::rand() % 9 ) {
+     case( 0 ): case( 1 ): case( 2 ): {
+      std::vector< double > c( n );
+      for( auto & ci : c )
+       ci = int( std::rand() % 21 ) - 10;
+      b.chg_costs( c , Block::Range( 0 , n ) );
+      break;
+      }
+     case( 3 ): {
+      const unsigned first = std::rand() % b.get_number_clauses();
+      const unsigned k = 1 + std::rand() %
+		std::min( 3u , unsigned( b.get_number_clauses() ) - first );
+      std::vector< double > w( k );
+      for( auto & wi : w )
+       wi = rnd_weight();
+      b.chg_weights( w , Block::Range( first , first + k ) );
+      break;
+      }
+     case( 4 ): {
+      SATBlock::v_Clause nc( 1 + std::rand() % 2 );
+      SATBlock::v_Weight nw( nc.size() );
+      for( unsigned c = 0 ; c < nc.size() ; ++c ) {
+       nc[ c ] = rnd_clause();
+       nw[ c ] = rnd_weight();
+       }
+      b.add_clauses( std::move( nc ) , std::move( nw ) );
+      break;
+      }
+     case( 5 ): case( 6 ): {
+      const unsigned i = std::rand() % n;
+      fixed[ i ] = std::rand() % 2;
+      b.var( i ).is_fixed( false );
+      b.var( i ).set_value( fixed[ i ] );
+      b.var( i ).is_fixed( true );
+      break;
+      }
+     case( 7 ): {
+      const unsigned k = std::min( 1u + std::rand() % 2 , 12u - n );
+      if( k == 0 )
+       break;
+      b.add_variables( k );
+      SATBlock::v_Clause nc;
+      SATBlock::v_Weight nw;
+      for( unsigned i = n ; i < n + k ; ++i ) {
+       auto cl = rnd_clause();
+       cl.push_back( int( i + 1 ) * ( std::rand() % 2 ? 1 : -1 ) );
+       nc.push_back( std::move( cl ) );
+       nw.push_back( rnd_weight() );
+       }
+      n += k;
+      fixed.resize( n , -1 );
+      b.add_clauses( std::move( nc ) , std::move( nw ) );
+      break;
+      }
+     default:
+      for( unsigned i = 0 ; i < n ; ++i ) {
+       fixed[ i ] = -1;
+       b.var( i ).is_fixed( false );
+       }
+     }
+
+   // the optimum by enumeration, among the values of the fixed variables
+   double best = inf;
+   for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
+    bool agree = true;
+    for( unsigned i = 0 ; i < n ; ++i )
+     if( ( fixed[ i ] >= 0 ) && ( int( ( mask >> i ) & 1 ) != fixed[ i ] ) )
+      agree = false;
+    if( ! agree )
+     continue;
+    set_values( b , mask );
+    if( b.is_feasible() )
+     best = std::min( best , b.get_objective_value() );
+    }
+
+   const int status = s->compute();
+   if( best == inf ) {
+    assert( status == Solver::kInfeasible );
+    ++infeasible;
+    }
+   else {
+    assert( status == Solver::kOK );
+    assert( ( s->get_lb() == best ) && ( s->get_ub() == best ) );
+    s->get_var_solution();
+    assert( b.is_feasible() && ( b.get_objective_value() == best ) );
+    }
+   ++steps;
+   }
+  b.unregister_Solvers( true );
+  }
+ std::cout << solver_name << ": OLL optimal through " << steps
+	   << " Modification kept by the same Solver (" << infeasible
+	   << " infeasible)" << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
+/// only the x generated: what can be done with them, and what cannot
+
+static void test_x_only( void )
+{
+ SATBlock b;
+ b.load( 3 , { { 1 , 2 } , { -1 , 3 } , { -2 , -3 } , { 2 } } ,
+	 { Inf< double >() , Inf< double >() , 4 , 3 } );
+ SimpleConfiguration< int > xonly( 1 );
+ b.generate_abstract_variables( & xonly );
+ assert( b.has_variables() && ( ! b.has_violations() ) &&
+	 ( b.get_variables().size() == 3 ) );
+
+ // clauses and variables can still be added, the rows and the Objective
+ // cannot be generated
+ b.add_variables( 1 );
+ b.add_clauses( { { -4 , 1 } } , { 2 } );
+ assert( ( b.get_number_variables() == 4 ) &&
+	 ( b.get_number_clauses() == 5 ) );
+ bool thrown = false;
+ try {
+  b.generate_abstract_constraints();
+  }
+ catch( std::logic_error & ) {
+  thrown = true;
+  }
+ assert( thrown );
+ thrown = false;
+ try {
+  b.generate_objective();
+  }
+ catch( std::logic_error & ) {
+  thrown = true;
+  }
+ assert( thrown );
+
+ // OLL with each x fixed in turn to each value, against the enumeration
+ auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+ s->set_par( SATSolver::intMaxSAT , 1 );
+ b.register_Solver( s );
+ const auto & cl = b.get_clauses();
+ const auto & w = b.get_weights();
+ for( unsigned int i = 0 ; i < 4 ; ++i )
+  for( int v = 0 ; v < 2 ; ++v ) {
+   double best = Inf< double >();
+   for( unsigned long mask = 0 ; mask < 16 ; ++mask ) {
+    if( int( ( mask >> i ) & 1 ) != v )
+     continue;
+    double z = 0;
+    bool feas = true;
+    for( unsigned int c = 0 ; c < cl.size() ; ++c ) {
+     const bool sat = std::any_of( cl[ c ].begin() , cl[ c ].end() ,
+				   [ mask ]( int l ) {
+      return( bool( ( mask >> ( std::abs( l ) - 1 ) ) & 1 ) == ( l > 0 ) );
+      } );
+     if( ! sat ) {
+      if( b.is_hard( c ) )
+       feas = false;
+      else
+       z += w[ c ];
+      }
+     }
+    if( feas )
+     best = std::min( best , z );
+    }
+   auto & x = b.var( i );
+   x.set_value( v );
+   x.is_fixed( true );
+   const int status = s->compute();
+   if( best == Inf< double >() )
+    assert( status == Solver::kInfeasible );
+   else {
+    assert( ( status == Solver::kOK ) && ( s->get_ub() == best ) );
+    s->get_var_solution();
+    assert( b.is_feasible() && ( b.get_violated_weight() == best ) &&
+	    ( b.var( i ).get_value() == v ) );
+    }
+   x.is_fixed( false );
+   }
+ b.unregister_Solvers( true );
+ std::cout << solver_name << ": OLL optimal with the x only, each one "
+	   << "fixed in turn" << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
+/// a depth-first branch and bound on the SATSolver as a RelaxationSolver,
+/// returning the best value found below the current node
+
+static void test_cadical_options( void )
+{
+ // a configuration and options of CaDiCaL, found by name since they are
+ // parameters of CaDiCaLSATSolver alone, and the wrong ones throw
+ SATBlock b;
+ load_string( b , "h 1 2 0\n3 -1 0\n4 -2 0\n2 0\n5 1 -1 0\n" );
+ auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+ const auto cfg = s->str_par_str2idx( "strCaDiCaLConfig" );
+ const auto opt = s->str_par_str2idx( "strCaDiCaLOptions" );
+ assert( ( s->get_str_par( opt ) == "lucky=0" ) &&
+	 ( s->get_dflt_str_par( opt ) == "lucky=0" ) &&
+	 s->get_str_par( cfg ).empty() );
+ bool thrown = false;
+ try { s->set_par( cfg , std::string( "nosuch" ) ); }
+ catch( const std::invalid_argument & ) { thrown = true; }
+ assert( thrown );
+ for( const std::string bad : { "elim" , "elim=" , "elim=x" , "elim=1x" ,
+				"nosuch=1" , "elim=0,,chrono=0" } ) {
+  bool thrown = false;
+  try { s->set_par( opt , std::string( bad ) ); }
+  catch( const std::invalid_argument & ) { thrown = true; }
+  assert( thrown );
+  }
+ s->set_par( cfg , std::string( "unsat" ) );
+ s->set_par( opt , std::string( "elim=0,chrono=0" ) );
+ assert( ( s->get_str_par( cfg ) == "unsat" ) &&
+	 ( s->get_str_par( opt ) == "elim=0,chrono=0" ) );
+ s->set_par( SATSolver::intMaxSAT , 1 );
+ b.register_Solver( s );
+ assert( s->compute() == Solver::kOK );
+ assert( ( s->get_lb() == 5 ) && ( s->get_ub() == 5 ) );
+ b.unregister_Solvers( true );
+
+ std::cout << solver_name << ": a configuration and options of CaDiCaL"
+	   << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
+
+static double dive( SATSolver * s , double incumbent , unsigned & nodes )
+{
+ ++nodes;
+ const int status = s->compute();
+ if( status == Solver::kInfeasible )
+  return( incumbent );
+ // with intMaxIter, kOK is the relaxation of the cores found so far: the
+ // node is closed when its bound meets the incumbent
+ assert( status == Solver::kOK );
+ if( s->has_true_var_solution() )
+  incumbent = std::min( incumbent , double( s->get_true_ub() ) );
+ assert( s->get_lb() <= s->get_ub() );
+ if( s->get_lb() >= incumbent )
+  return( incumbent );
+ for( auto chg : s->branch() ) {
+  auto undo = s->apply( chg , true );
+  incumbent = dive( s , incumbent , nodes );
+  s->apply( undo );
+  delete undo;
+  delete chg;
+  }
+ return( incumbent );
+ }
+
+/*--------------------------------------------------------------------------*/
+/// the SATBlockChange, and the SATSolver as a RelaxationSolver: a branch
+/// and bound with a budget of 2 calls of the SAT solver per node against
+/// the enumeration on random instances
+
+static void test_branch( void )
+{
+ const auto inf = Inf< double >();
+
+ // fix, undo, unfix, undo, and the netCDF round trip
+ {
+  SATBlock b;
+  load_string( b , "p cnf 3 1\n1 2 3 0\n" );
+  auto & x = b.get_variables();
+  SATBlockChange fix( SATBlockChange::eFixX , { 0 , 2 } , { 1 , 0 } );
+  auto undo = fix.apply( & b , true );
+  assert( x[ 0 ].is_fixed() && ( x[ 0 ].get_value() == 1 ) &&
+	  ( ! x[ 1 ].is_fixed() ) &&
+	  x[ 2 ].is_fixed() && ( x[ 2 ].get_value() == 0 ) );
+  bool threw = false;  // already fixed: the undo could not tell it
+  try { fix.apply( & b ); } catch( std::invalid_argument & ) { threw = true; }
+  assert( threw );
+  auto redo = undo->apply( & b , true );
+  assert( ( ! x[ 0 ].is_fixed() ) && ( ! x[ 2 ].is_fixed() ) );
+  // the undo of an unfixing fixes back at the old values
+  assert( dynamic_cast< SATBlockChange * >( redo )->type() ==
+	  SATBlockChange::eFixX );
+  delete redo->apply( & b );
+  assert( x[ 0 ].is_fixed() && ( x[ 0 ].get_value() == 1 ) &&
+	  x[ 2 ].is_fixed() && ( x[ 2 ].get_value() == 0 ) );
+  delete undo;
+  delete redo;
+
+  const auto file = std::filesystem::temp_directory_path() /
+		    "SATBlockChange_test.nc4";
+  fix.serialize( file.string() );
+  netCDF::NcFile f( file.string() , netCDF::NcFile::read );
+  auto back = Change::new_Change( f.getGroup( "Change_0" ) );
+  auto sback = dynamic_cast< SATBlockChange * >( back );
+  assert( sback && ( sback->type() == SATBlockChange::eFixX ) &&
+	  ( sback->nms() == Block::Subset{ 0 , 2 } ) &&
+	  ( sback->values() == std::vector< double >{ 1 , 0 } ) );
+  delete back;
+  std::filesystem::remove( file );
+  }
+
+ std::srand( 2718 );
+ unsigned checked = 0 , branched = 0 , nodes = 0;
+ for( unsigned t = 0 ; t < 100 ; ++t ) {
+  const unsigned n = 4 + std::rand() % 7;          // 4 to 10 variables
+  const unsigned m = n + std::rand() % ( 3 * n );
+  SATBlock::v_Clause clauses( m );
+  SATBlock::v_Weight weights( m );
+  for( unsigned c = 0 ; c < m ; ++c ) {
+   const unsigned len = 1 + std::rand() % 3;
+   for( unsigned l = 0 ; l < len ; ++l )
+    clauses[ c ].push_back( int( 1 + std::rand() % n ) *
+			    ( std::rand() % 2 ? 1 : -1 ) );
+   weights[ c ] = ( std::rand() % 4 == 0 ) ? inf : 1 + std::rand() % 20;
+   }
+  SATBlock b;
+  b.load( n , std::move( clauses ) , std::move( weights ) );
+  b.generate_abstract_variables();
+  if( t % 2 ) {
+   std::vector< double > costs( n );
+   for( auto & c : costs )
+    c = int( std::rand() % 21 ) - 10;
+   b.chg_costs( costs , Block::Range( 0 , n ) );
+   }
+
+  double best = inf;
+  for( unsigned long mask = 0 ; mask < ( 1ul << n ) ; ++mask ) {
+   set_values( b , mask );
+   if( b.is_feasible() )
+    best = std::min( best , b.get_objective_value() );
+   }
+
+  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+  s->set_par( SATSolver::intMaxSAT , 1 );
+  s->set_par( Solver::intMaxIter , 2 );
+  b.register_Solver( s );
+  unsigned here = 0;
+  const double found = dive( s , inf , here );
+  assert( found == best );
+  for( auto & xi : b.get_variables() )  // the undos have unfixed them all
+   assert( ! xi.is_fixed() );
+  nodes += here;
+  if( here > 1 )
+   ++branched;
+  b.unregister_Solvers( true );
+  ++checked;
+  }
+ std::cout << solver_name << ": branch and bound optimal on " << checked
+	   << " random instances, " << branched << " of them branched, "
+	   << nodes << " nodes" << std::endl;
+ }
+
+/*--------------------------------------------------------------------------*/
+/// the graph of the residual formula: its vertices, edges and rows
+
+static void test_residual_graph( void )
+{
+ const auto inf = Inf< double >();
+
+ // x1 or x2 hard, not x1 of weight 4, x2 or not x3 or x4 of weight 2, x4
+ // alone of weight 1, and the cost 3 on x3
+ SATBlock b;
+ b.load( 4 , { { 1 , 2 } , { -1 } , { 2 , -3 , 4 } , { 4 } } ,
+	 { inf , 4 , 2 , 1 } );
+ b.generate_abstract_variables();
+ std::vector< double > c = { 0 , 0 , 3 , 0 };
+ b.chg_costs( c , Block::Range( 0 , 4 ) );
+ auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+ b.register_Solver( s );
+ auto & x = b.get_variables();
+
+ // nothing fixed: 4 variables, 4 clauses, 2 edges per literal
+ SATResidualGraph g;
+ assert( g.build( * s ) && ( g.n_col == 2 ) && ( g.n_var == 4 ) &&
+	 ( g.n_clause == 4 ) && ( g.source.size() == 2 * 7 ) &&
+	 ( g.edge.size() == 2 * g.source.size() ) &&
+	 ( g.vertex.size() == 8 * 2 ) );
+ // the first literal, x1 positive, from variable 0 to clause 4 and back
+ assert( ( g.source[ 0 ] == 0 ) && ( g.target[ 0 ] == 4 ) &&
+	 ( g.source[ 1 ] == 4 ) && ( g.target[ 1 ] == 0 ) &&
+	 ( g.edge[ 0 ] == 0 ) && ( g.edge[ 1 ] == 1 ) );
+ // not x1 in clause 5: the row [ 1 , 0 ]
+ assert( ( g.target[ 4 ] == 5 ) && ( g.edge[ 8 ] == 1 ) &&
+	 ( g.edge[ 9 ] == 0 ) );
+ assert( ( g.vertex[ 0 ] == 1 ) && ( g.vertex[ 1 ] == 0 ) &&
+	 ( g.vertex[ 4 * 2 ] == 0 ) && ( g.vertex[ 4 * 2 + 1 ] == 1 ) );
+
+ // x2 fixed true satisfies the 1st and the 3rd clause; x4 fixed false
+ // leaves the 4th with no literal: x1 and x3 are left, and not x1
+ x[ 1 ].set_value( 1 ); x[ 1 ].is_fixed( true );
+ x[ 3 ].set_value( 0 ); x[ 3 ].is_fixed( true );
+ assert( g.build( * s , SATResidualGraph::eMaxSAT ) && ( g.n_col == 7 ) &&
+	 ( g.n_var == 2 ) && ( g.n_clause == 1 ) &&
+	 ( g.var == std::vector< unsigned int >{ 0 , 2 } ) &&
+	 ( g.source.size() == 2 ) );
+ // no solution yet: 1/2; no core: 0; the cost of x3 over the weight 4
+ assert( ( g.vertex[ 2 ] == 0.5f ) && ( g.vertex[ 3 ] == 0 ) &&
+	 ( g.vertex[ 4 ] == 0 ) && ( g.vertex[ 7 + 4 ] == 0.75f ) );
+ // the clause not x1, of weight 4, the largest
+ assert( ( g.vertex[ 14 + 5 ] == 1 ) && ( g.vertex[ 14 + 6 ] == 0 ) );
+ // with the index: the same seven columns, then x1 and x3 over the 4 x,
+ // and 0 for the clause
+ SATResidualGraph gi;
+ assert( gi.build( * s , SATResidualGraph::eMaxSATIndex ) &&
+	 ( gi.n_col == 8 ) && ( gi.var == g.var ) );
+ for( long v = 0 ; v < 3 ; ++v )
+  for( unsigned int col = 0 ; col < 7 ; ++col )
+   assert( gi.vertex[ v * 8 + col ] == g.vertex[ v * 7 + col ] );
+ assert( ( gi.vertex[ 7 ] == 0 ) && ( gi.vertex[ 8 + 7 ] == 0.5f ) &&
+	 ( gi.vertex[ 16 + 7 ] == 0 ) );
+
+ // x1 fixed true too: not x1 has no literal left, nothing to say
+ x[ 0 ].set_value( 1 ); x[ 0 ].is_fixed( true );
+ assert( ( ! g.build( * s ) ) && ( g.n_var == 0 ) && g.vertex.empty() );
+ // and all fixed: no variable
+ x[ 2 ].set_value( 0 ); x[ 2 ].is_fixed( true );
+ assert( ! g.build( * s ) );
+ b.unregister_Solvers( true );
+ }
+
+/*--------------------------------------------------------------------------*/
 /// OLL on the instances of the MaxSAT Evaluation whose optimum is known: the
 /// optimum if it finishes, bounds around it if the time limit stops it
 
@@ -829,7 +1724,7 @@ static void test_oll_mse( void )
 {
  std::ifstream opt( "../data/wcnf/mse24-small/optima.txt" );
  assert( opt );
- unsigned optimal = 0 , stopped = 0;
+ unsigned optimal = 0 , stopped = 0 , wce_optimal = 0 , hard_optimal = 0;
  std::string line;
  while( std::getline( opt , line ) ) {
   if( line.empty() || ( line[ 0 ] == '#' ) )
@@ -843,27 +1738,35 @@ static void test_oll_mse( void )
   assert( in );
   SATBlock b;
   b.load( in , 'W' );
-  auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
-  s->set_par( SATSolver::intMaxSAT , 1 );
-  s->set_par( Solver::dblMaxTime , 2.0 );
-  b.register_Solver( s );
-  const int status = s->compute();
-  if( status == Solver::kOK ) {
-   assert( ( s->get_lb() == z ) && ( s->get_ub() == z ) );
-   s->get_var_solution();
-   assert( b.is_feasible() && ( b.get_violated_weight() == z ) );
-   ++optimal;
+  // the cores extracted as they come without and with the hardening, then
+  // weight-aware
+  for( int wce = 0 ; wce < 3 ; ++wce ) {
+   auto s = dynamic_cast< SATSolver * >( Solver::new_Solver( solver_name ) );
+   s->set_par( SATSolver::intMaxSAT , 1 );
+   s->set_par( SATSolver::intMaxSATWCE , int( wce == 1 ) );
+   s->set_par( SATSolver::intMaxSATHarden , int( wce == 2 ) );
+   s->set_par( Solver::dblMaxTime , 2.0 );
+   b.register_Solver( s );
+   const int status = s->compute();
+   if( status == Solver::kOK ) {
+    assert( ( s->get_lb() == z ) && ( s->get_ub() == z ) );
+    s->get_var_solution();
+    assert( b.is_feasible() && ( b.get_violated_weight() == z ) );
+    ++( wce == 2 ? hard_optimal : ( wce ? wce_optimal : optimal ) );
+    }
+   else {
+    assert( status == Solver::kStopTime );
+    assert( ( s->get_lb() <= z ) && ( z <= s->get_ub() ) );
+    if( ! wce )
+     ++stopped;
+    }
+   b.unregister_Solvers( true );
    }
-  else {
-   assert( status == Solver::kStopTime );
-   assert( ( s->get_lb() <= z ) && ( z <= s->get_ub() ) );
-   ++stopped;
-   }
-  b.unregister_Solvers( true );
   }
  std::cout << solver_name << ": OLL optimal on " << optimal
 	   << " MaxSAT Evaluation instances, stopped by the time on "
-	   << stopped << std::endl;
+	   << stopped << ", with WCE optimal on " << wce_optimal
+	   << ", hardening " << hard_optimal << std::endl;
  }
 
 /*--------------------------------------------------------------------------*/
@@ -928,11 +1831,18 @@ int main( int argc , char ** argv )
  test_round_trips();
  test_modifications();
  test_costs();
+ test_structure();
  test_satlib();
 #ifdef SATBLOCK_HAS_CADICAL
  solver_name = "CaDiCaLSATSolver";
+ test_cadical_options();
  test_solver();
  test_oll();
+ test_oll_structure();
+ test_oll_incremental();
+ test_x_only();
+ test_branch();
+ test_residual_graph();
  test_oll_mse();
  test_solver_satlib();
 #endif
@@ -940,6 +1850,11 @@ int main( int argc , char ** argv )
  solver_name = "MiniSATSolver";
  test_solver();
  test_oll();
+ test_oll_structure();
+ test_oll_incremental();
+ test_x_only();
+ test_branch();
+ test_residual_graph();
  test_oll_mse();
  test_solver_satlib();
 #endif

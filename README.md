@@ -26,13 +26,29 @@ the hard clauses, those added on top of those it has, the fixed variables as
 assumptions (so that, after an unsatisfiable answer, it tells which of them
 are in its reason) and the time limit. With the parameter `intMaxSAT` it
 solves the weighted MaxSAT by the core-guided algorithm OLL, with the
-assumptions stratified by weight and the cores trimmed and minimized.
+assumptions stratified by weight and the cores trimmed and minimized; OLL is
+incremental, i.e., the cores it finds are used again, with the weights of
+the moment, by the following solves of a changed instance. A `SATSolver` is
+also a relaxation for the `BranchAndXSolver`, which enumerates on it by
+fixing variables (`SATBlockChange`), OLL running within a budget of calls of
+the SAT solver in each node; the variable it fixes is chosen by the cores,
+or by a `SATBranchRule` given by name, such as the one of `SATBlockML`, a
+library built if Torch is found, which reads a policy learned by Graph-Q-SAT.
 `CaDiCaLSATSolver` and `MiniSATSolver` are the ones for CaDiCaL and MiniSat,
 each built if its SAT solver is found.
 
+The variables of a `SATBlock` may be dealt out to groups, out of which it
+can be given the structure of a Lagrangian relaxation, with the clauses that
+link the groups in the father, or of a Lagrangian decomposition, with copies
+of the variables a linking clause takes into another group; either way there
+is one sub-`SATBlock` per group, and the `LagrangianDualSolver` relaxes the
+rows of the father.
+
 `smspp_satgen` generates random weighted partial MaxSAT instances made of
 groups of clauses bound by a tunable fraction of linking clauses, which is the
-structure the decompositions are for.
+structure the decompositions are for, and `smspp_satpart` deals the variables
+of any instance out to groups, the communities of its variable incidence
+graph.
 
 
 ## Getting started

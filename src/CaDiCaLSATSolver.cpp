@@ -15,7 +15,9 @@
 /*--------------------------------------------------------------------------*/
 
 #include <algorithm>
+#include <array>
 #include <limits>
+#include <stdexcept>
 
 #include "cadical.hpp"
 
@@ -67,9 +69,106 @@ std::string CaDiCaLSATSolver::signature( void ) const
 
 /*--------------------------------------------------------------------------*/
 
+void CaDiCaLSATSolver::set_par( idx_type par , std::string && value )
+{
+ switch( par ) {
+  case( strCaDiCaLConfig ):
+   if( ( ! value.empty() ) &&
+       ( ! CaDiCaL::Solver::is_valid_configuration( value.c_str() ) ) )
+    throw( std::invalid_argument( "CaDiCaLSATSolver::set_par: no "
+				  "configuration named " + value ) );
+   Config = std::move( value );
+   break;
+  case( strCaDiCaLOptions ): {
+   std::vector< std::pair< std::string , int > > options;
+   std::size_t from = 0;
+   while( from < value.size() ) {
+    auto to = value.find( ',' , from );
+    if( to == std::string::npos )
+     to = value.size();
+    const auto item = value.substr( from , to - from );
+    const auto eq = item.find( '=' );
+    const auto name = item.substr( 0 , eq );
+    std::size_t used = 0;
+    int val = 0;
+    if( eq != std::string::npos )
+     try {
+      val = std::stoi( item.substr( eq + 1 ) , & used );
+      }
+     catch( const std::exception & ) { used = 0; }
+    if( ( used == 0 ) || ( used != item.size() - eq - 1 ) ||
+	( ! CaDiCaL::Solver::is_valid_option( name.c_str() ) ) )
+     throw( std::invalid_argument( "CaDiCaLSATSolver::set_par: " + item +
+				   " is not a name=value option" ) );
+    options.emplace_back( name , val );
+    from = to + 1;
+    }
+   v_options = std::move( options );
+   Options = std::move( value );
+   break;
+   }
+  default:
+   SATSolver::set_par( par , std::move( value ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+const std::string & CaDiCaLSATSolver::get_dflt_str_par( idx_type par )
+ const
+{
+ static const std::string empty;
+ static const std::string options = "lucky=0";
+ if( par == strCaDiCaLConfig )
+  return( empty );
+ if( par == strCaDiCaLOptions )
+  return( options );
+ return( SATSolver::get_dflt_str_par( par ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+const std::string & CaDiCaLSATSolver::get_str_par( idx_type par ) const
+{
+ switch( par ) {
+  case( strCaDiCaLConfig ):  return( Config );
+  case( strCaDiCaLOptions ): return( Options );
+  default:                   return( SATSolver::get_str_par( par ) );
+  }
+ }
+
+/*--------------------------------------------------------------------------*/
+
+Solver::idx_type CaDiCaLSATSolver::str_par_str2idx( const std::string & name )
+ const
+{
+ if( name == "strCaDiCaLConfig" )
+  return( strCaDiCaLConfig );
+ if( name == "strCaDiCaLOptions" )
+  return( strCaDiCaLOptions );
+ return( SATSolver::str_par_str2idx( name ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+const std::string & CaDiCaLSATSolver::str_par_idx2str( idx_type idx ) const
+{
+ static const std::array< std::string , 2 > names = { "strCaDiCaLConfig" ,
+						       "strCaDiCaLOptions" };
+ if( ( idx >= strCaDiCaLConfig ) && ( idx < strLastAlgParCaDiCaL ) )
+  return( names[ idx - strCaDiCaLConfig ] );
+ return( SATSolver::str_par_idx2str( idx ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 void CaDiCaLSATSolver::sat_new( void )
 {
  f_solver = std::make_unique< CaDiCaL::Solver >();
+ if( ! Config.empty() )
+  f_solver->configure( Config.c_str() );
+ for( const auto & [ name , val ] : v_options )
+  f_solver->set( name.c_str() , val );
  }
 
 /*--------------------------------------------------------------------------*/
