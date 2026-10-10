@@ -316,7 +316,8 @@ endif()
     list(APPEND DATA_MARKERS ${marker})
 endforeach ()
 
-# the target the test depends on: both archives downloaded and extracted
+# the target the tests build before they run [see test/CMakeLists.txt]: both
+# archives downloaded and extracted
 add_custom_target(fetch_sat_data DEPENDS ${DATA_MARKERS})
 
 # ----- Tests --------------------------------------------------------------- #

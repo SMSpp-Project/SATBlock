@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- the instances of `data/` are downloaded and extracted when the unit test
+  is run, by the test `SATBlock_fetch_data` it requires as a fixture, and
+  no longer when it is built
+
 ## [0.2.0] - 2026-10-09
 
 ### Added

@@ -33,9 +33,6 @@ endif ()
 
 add_executable(${modName}_unit_test test.cpp)
 
-# the instances the test reads are downloaded first [see the CMakeLists.txt of
-# the module]
-add_dependencies(${modName}_unit_test fetch_sat_data)
 target_link_libraries(${modName}_unit_test PRIVATE ${modNamespace}::${modName})
 if (SATBlock_USE_CADICAL)
     target_compile_definitions(${modName}_unit_test PRIVATE
@@ -66,6 +63,17 @@ add_test(NAME ${modName}_unit_test
 # module with `ctest -L <module>` (see tests/cmake/TestLabels.cmake in the
 # umbrella for the system-tests counterpart).
 set_tests_properties(${modName}_unit_test PROPERTIES LABELS "${modName}")
+
+# the instances the test reads are downloaded and extracted when the test is
+# run, not when it is built, by this test, which builds the target of the
+# module that does it [see the CMakeLists.txt of the module]
+add_test(NAME ${modName}_fetch_data
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                 --target fetch_sat_data)
+set_tests_properties(${modName}_fetch_data PROPERTIES
+                     LABELS "${modName}" FIXTURES_SETUP sat_data_ready)
+set_tests_properties(${modName}_unit_test PROPERTIES
+                     FIXTURES_REQUIRED sat_data_ready)
 
 # SATBlockML, if it is built: the learned SATBranchRule
 if (TARGET ${modNamespace}::${modName}ML)
