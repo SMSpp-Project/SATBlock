@@ -64,16 +64,21 @@ add_test(NAME ${modName}_unit_test
 # umbrella for the system-tests counterpart).
 set_tests_properties(${modName}_unit_test PROPERTIES LABELS "${modName}")
 
-# the instances the test reads are downloaded and extracted when the test is
-# run, not when it is built, by this test, which builds the target of the
-# module that does it [see the CMakeLists.txt of the module]
-add_test(NAME ${modName}_fetch_data
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
-                 --target fetch_sat_data)
-set_tests_properties(${modName}_fetch_data PROPERTIES
-                     LABELS "${modName}" FIXTURES_SETUP sat_data_ready)
-set_tests_properties(${modName}_unit_test PROPERTIES
-                     FIXTURES_REQUIRED sat_data_ready)
+# the instances of the module, downloaded and extracted when the tests that
+# read them are run, not when they are built [see the CMakeLists.txt of the
+# module]; the lock is shared by the tests that build a target of the data of
+# the module, which under ctest -j would write the same files at once
+foreach (fmt cnf wcnf)
+    add_test(NAME ${modName}_extract_sat_${fmt}
+             COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                     --target extract_sat_${fmt})
+    set_tests_properties(${modName}_extract_sat_${fmt} PROPERTIES
+                         FIXTURES_SETUP sat_${fmt}_extracted
+                         RESOURCE_LOCK sat_data
+                         LABELS "${modName}")
+endforeach ()
+set_tests_properties(${modName}_unit_test PROPERTIES FIXTURES_REQUIRED
+                     "sat_cnf_extracted;sat_wcnf_extracted")
 
 # SATBlockML, if it is built: the learned SATBranchRule
 if (TARGET ${modNamespace}::${modName}ML)

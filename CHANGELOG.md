@@ -9,9 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- the instances of `data/` are downloaded and extracted when the unit test
-  is run, by the test `SATBlock_fetch_data` it requires as a fixture, and
-  no longer when it is built
+- the instances of `data/` are downloaded and extracted by the targets
+  `download_sat_<fmt>` and `extract_sat_<fmt>`, written as in every module
+  that keeps its instances in the Package Registry, and the marker of the
+  extraction carries the format in its name, so that a tree extracted
+  before extracts once more; `fetch_sat_data` is now `extract_sat_cnf` and
+  `extract_sat_wcnf`, which the unit test builds when it is run, by the
+  tests `SATBlock_extract_sat_cnf` and `SATBlock_extract_sat_wcnf` it
+  requires as fixtures, and no longer when it is built
 
 ## [0.2.0] - 2026-10-09
 

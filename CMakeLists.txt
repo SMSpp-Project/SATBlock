@@ -258,26 +258,40 @@ else ()
 endif ()
 
 # ----- Data ---------------------------------------------------------------- #
-# The instances the tests read, in two archives of the GitLab Package
-# Registry: cnf.tgz, a selection of the SATLIB collection, and wcnf.tgz, the
+# The instances are a selection of the SATLIB collection (cnf) and the
 # smallest instance of each family of the exact weighted track of the MaxSAT
-# Evaluation 2024 with the optimum RC2 finds for it [see data/wcnf/README].
-# Each is downloaded and extracted into data/ once per version.
-
-# The version of the archives in the Package Registry. A published version is
-# never replaced: new data go out under a new version, written here first [see
-# data/upload], and the archives and the markers of their extraction carry it
-# in their name, so that a tree holding the data of an older version (a cache
-# of the CI, or a clone that has been extracted before) downloads and extracts
-# again instead of taking them for the current ones.
+# Evaluation 2024 with the optimum RC2 finds for it (wcnf) [see
+# data/wcnf/README].
+#
+# The instances the tests read are, for each <fmt> of DATA_FORMATS, the
+# archive <fmt>.tgz in the GitLab Package Registry of the project
+# DATA_PROJECT, extracted into data/<fmt>. Nothing of this is built with the
+# module: extract_<DATA_PREFIX>_<fmt> downloads the archive (by building
+# download_<DATA_PREFIX>_<fmt>) and extracts it, and it is built when the
+# tests that read the instances are run, by a test that sets up the fixture
+# <DATA_PREFIX>_<fmt>_extracted they require.
+#
+# A published version is never replaced: new data go out under a new
+# version, written here first [see the upload scripts in data/], and the
+# archive and the marker of its extraction carry it in their name, so that a
+# tree holding the data of an older version (a cache of the CI, or a clone
+# that has been extracted before) downloads and extracts again instead of
+# taking them for the current ones.
 set(DATA_VERSION 2026-09-26)
+set(DATA_PROJECT 86936161)
+set(DATA_PREFIX sat)
+set(DATA_FORMATS cnf wcnf)
 
-set(DATA_MARKERS)
-foreach (fmt cnf wcnf)
-    set(url "https://gitlab.com/api/v4/projects/86936161/packages/generic/${fmt}/${DATA_VERSION}/${fmt}.tgz")
+foreach (fmt ${DATA_FORMATS})
+    set(url "https://gitlab.com/api/v4/projects/${DATA_PROJECT}/packages/\
+generic/${fmt}/${DATA_VERSION}/${fmt}.tgz")
     set(archive ${CMAKE_CURRENT_SOURCE_DIR}/data/${fmt}-${DATA_VERSION}.tgz)
-    set(marker ${CMAKE_CURRENT_SOURCE_DIR}/data/.extracted-${fmt}-${DATA_VERSION})
-    set(script ${CMAKE_CURRENT_BINARY_DIR}/download_sat_${fmt}.cmake)
+    set(script
+        ${CMAKE_CURRENT_BINARY_DIR}/download_${DATA_PREFIX}_${fmt}.cmake)
+    # the marker of the extraction, on which what is made from the instances
+    # depends too
+    set(DATA_MARKER_${fmt}
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/.extracted-${fmt}-${DATA_VERSION})
 
     file(WRITE ${script} "
 file(DOWNLOAD \"${url}\" \"${archive}\" SHOW_PROGRESS STATUS _status)
@@ -303,22 +317,23 @@ endif()
             COMMAND ${CMAKE_COMMAND} -P ${script}
             COMMENT "Downloading ${fmt}.tgz from the GitLab Package Registry"
             VERBATIM)
+    add_custom_target(download_${DATA_PREFIX}_${fmt} DEPENDS ${archive})
 
     add_custom_command(
-            OUTPUT ${marker}
+            OUTPUT ${DATA_MARKER_${fmt}}
             COMMAND ${CMAKE_COMMAND} -E tar xzf ${archive}
-            COMMAND ${CMAKE_COMMAND} -E touch ${marker}
+            COMMAND ${CMAKE_COMMAND} -E touch ${DATA_MARKER_${fmt}}
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
             COMMENT "Extracting ${fmt}.tgz"
             VERBATIM
             DEPENDS ${archive})
-
-    list(APPEND DATA_MARKERS ${marker})
+    add_custom_target(extract_${DATA_PREFIX}_${fmt}
+                      DEPENDS ${DATA_MARKER_${fmt}})
+    # the archive is the output of a command in both targets: it has to be
+    # downloaded once, before it is extracted
+    add_dependencies(extract_${DATA_PREFIX}_${fmt}
+                     download_${DATA_PREFIX}_${fmt})
 endforeach ()
-
-# the target the tests build before they run [see test/CMakeLists.txt]: both
-# archives downloaded and extracted
-add_custom_target(fetch_sat_data DEPENDS ${DATA_MARKERS})
 
 # ----- Tests --------------------------------------------------------------- #
 if (BUILD_TESTING)
