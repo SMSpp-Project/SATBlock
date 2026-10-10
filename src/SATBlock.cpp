@@ -1490,12 +1490,9 @@ void SATBlock::guts_of_destructor( void )
 {
  // the rows and the Objective go before the ColVariable they are active in,
  // and are told not to bother with them, both going away together
- for( auto & c : v_c )
-  c.clear();
- for( auto & c : l_c )
-  c.clear();
- for( auto & c : v_link_c )
-  c.clear();
+ Constraint::clear( v_c );
+ Constraint::clear( l_c );
+ Constraint::clear( v_link_c );
  f_obj.clear();
 
  reset_objective();
@@ -1503,9 +1500,6 @@ void SATBlock::guts_of_destructor( void )
  reset_static_constraints();
  reset_dynamic_variables();
  reset_static_variables();
- l_c.clear();
- v_c.clear();
- v_link_c.clear();
  l_r.clear();
  v_r.clear();
  v_x.clear();
