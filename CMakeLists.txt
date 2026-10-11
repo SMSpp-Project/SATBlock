@@ -187,6 +187,14 @@ else ()
     message(STATUS "MiniSATSolver: MiniSat not found, not built")
 endif ()
 
+# Whoever adds this module as a subdirectory (the umbrella, and through it
+# tests/ and experiments/) is told which SAT solvers it was built with, as
+# whoever finds the installed one is [see cmake/SATBlockConfig.cmake.in].
+if (hasParent)
+    set(SATBlock_USE_CADICAL ${SATBlock_USE_CADICAL} PARENT_SCOPE)
+    set(SATBlock_USE_MINISAT ${SATBlock_USE_MINISAT} PARENT_SCOPE)
+endif ()
+
 # When using target_include_directories(), PUBLIC means that any targets
 # that link to this target also need that include directory.
 # Other options are PRIVATE (only affect the current target, not dependencies),

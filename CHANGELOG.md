@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests `SATBlock_extract_sat_cnf` and `SATBlock_extract_sat_wcnf` it
   requires as fixtures, and no longer when it is built
 
+### Fixed
+
+- `SATBlock_USE_CADICAL` and `SATBlock_USE_MINISAT` tell whoever adds the
+  module as a subdirectory (the umbrella, and the directories it adds after
+  it) whether the SAT solver was found, as they tell whoever finds the
+  installed module: they stayed at the value of the option, ON, also when
+  `CaDiCaLSATSolver` or `MiniSATSolver` was not built
+
 ## [0.2.0] - 2026-10-09
 
 ### Added
