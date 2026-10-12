@@ -1048,7 +1048,8 @@ void SATBlock::chg_costs( MF_dbl_sp NCost , Range rng ,
   for( Index i = rng.first ; i < rng.second ; ++i )
    set_cost( i , NCost[ i - rng.first ] , issueAMod );
 
- if( issue_pmod( issueMod ) )
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eChgCost ) ) )
   add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 					SATBlockMod::eChgCost , rng ) ,
 		    Observer::par2chnl( issueMod ) );
@@ -1107,7 +1108,8 @@ void SATBlock::chg_costs( MF_dbl_sp NCost , Subset && nms , bool ordered ,
    }
   }
 
- if( issue_pmod( issueMod ) ) {
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eChgCost ) ) ) {
   for( Index k = 0 ; k < nc.size() ; ++k )
    nms[ k ] = nc[ k ].first;
   add_Modification( std::make_shared< SATBlockSbstMod >( this ,
@@ -1215,7 +1217,8 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
   for( Index i = rng.first ; i < rng.second ; ++i )
    set_weight( i , NWeight[ i - rng.first ] , issueAMod );
 
- if( issue_pmod( issueMod ) )
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eChgWeight ) ) )
   add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 					SATBlockMod::eChgWeight , rng ) ,
 		    Observer::par2chnl( issueMod ) );
@@ -1297,7 +1300,8 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
    }
   }
 
- if( issue_pmod( issueMod ) ) {
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eChgWeight ) ) ) {
   for( Index k = 0 ; k < nw.size() ; ++k )
    nms[ k ] = nw[ k ].first;
   add_Modification( std::make_shared< SATBlockSbstMod >( this ,
@@ -1387,7 +1391,8 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
    group_Block( g ).add_clauses( std::move( cw.first ) ,
 				 std::move( cw.second ) , issueMod , issueAMod );
 
-  if( issue_pmod( issueMod ) )
+  if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                  SATBlockMod::eAddClauses ) ) )
    add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 				     SATBlockMod::eAddClauses ,
 				     Range( first , v_clauses.size() ) ) ,
@@ -1425,7 +1430,8 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
    }
   }
 
- if( issue_pmod( issueMod ) )
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eAddClauses ) ) )
   add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 			     SATBlockMod::eAddClauses ,
 			     Range( first , v_clauses.size() ) ) ,
@@ -1477,7 +1483,8 @@ void SATBlock::add_variables( unsigned int k , ModParam issueMod ,
    }
   }
 
- if( issue_pmod( issueMod ) )
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eAddVariables ) ) )
   add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 			     SATBlockMod::eAddVariables ,
 			     Range( first , f_n_var ) ) ,
