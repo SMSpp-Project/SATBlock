@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests `SATBlock_extract_sat_cnf` and `SATBlock_extract_sat_wcnf` it
   requires as fixtures, and no longer when it is built
 
+### Removed
+
+- `SATSolver::classify()`, together with the method of RelaxationSolver
+  it implemented: what a `SATBlockMod` changes is said by its `changes()`
+
 ### Fixed
 
 - `FindCaDiCaL.cmake` looks for the library first next to the header it
