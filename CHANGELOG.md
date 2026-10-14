@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `FindCaDiCaL.cmake` looks for the library first next to the header it
+  has found: with 2 versions of CaDiCaL on the system (one of the
+  distribution and one built by hand) it took the header of the one and the
+  library of the other, and SATBlock did not link
 - `SATBlock_USE_CADICAL` and `SATBlock_USE_MINISAT` tell whoever adds the
   module as a subdirectory (the umbrella, and the directories it adds after
   it) whether the SAT solver was found, as they tell whoever finds the
