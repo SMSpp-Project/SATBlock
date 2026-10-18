@@ -1,5 +1,10 @@
 # SATBlock
 
+[![Pipeline](https://gitlab.com/smspp/satblock/badges/develop/pipeline.svg)](https://gitlab.com/smspp/satblock/-/pipelines?ref=develop)
+[![Documentation](https://img.shields.io/badge/docs-Doxygen-blue)](https://smspp.gitlab.io/smspp-project/)
+[![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
+[![License: LGPL v3](https://img.shields.io/badge/License-LGPL_v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
+
 `SATBlock` is a SMS++ :Block for the satisfiability problems of the
 propositional logic, i.e., finding values of a set of Boolean variables that
 satisfy a set of clauses, each clause being the disjunction of a number of
