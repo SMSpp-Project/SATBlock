@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it) whether the SAT solver was found, as they tell whoever finds the
   installed module: they stayed at the value of the option, ON, also when
   `CaDiCaLSATSolver` or `MiniSATSolver` was not built
+- `FindCaDiCaL.cmake` also looks for the header in `include/cadical`, where
+  the packages of some distributions (e.g., Arch) put it, and then for the
+  library in the prefix above that directory: CaDiCaL was not found there
 
 ## [0.2.0] - 2026-10-09
 
