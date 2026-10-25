@@ -73,6 +73,12 @@ SATBkH += $(SATBkSDR)/include/MiniSATSolver.h
 SATBkLIB += $(libMiniSatLIB)
 endif
 
+# the C++20 module smspp.satblock - - - - - - - - - - - - - - - - - - - - - -
+# [see makefile-mod of SMS++]
+
+$(eval $(call SMSppMODrule,SATBk,$(SATBkSDR),SATBlock,smspp.satblock,\
+	$(SMS++MOD)))
+
 # clean - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 clean::
