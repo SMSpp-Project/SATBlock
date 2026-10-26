@@ -32,8 +32,6 @@ module;
 
 #include "CaDiCaLSATSolver.h"
 #include "MiniSATSolver.h"
-#include "SATBlock.h"
-#include "SATSolver.h"
 
 /*--------------------------------------------------------------------------*/
 /*----------------------------- MODULE PURVIEW -----------------------------*/
@@ -42,12 +40,6 @@ module;
 export module smspp.satblock;
 
 export import smspp;
-
-export namespace CaDiCaL {
-}
-
-export namespace Minisat {
-}
 
 export namespace SMSpp_di_unipi_it {
 
