@@ -77,7 +77,7 @@ endif
 # [see makefile-mod of SMS++]
 
 $(eval $(call SMSppMODrule,SATBk,$(SATBkSDR),SATBlock,smspp.satblock,\
-	$(SMS++MOD)))
+	SMS++))
 
 # clean - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
