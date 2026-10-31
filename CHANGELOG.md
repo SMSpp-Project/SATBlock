@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- the tester checks what each physical Modification says it changes
+  (`changes()`) against what the change does to the model, written down in
+  the tester, for every type of `SATBlockMod` and for clauses turning
+  hard and soft
+
 - the makefiles build the C++20 module `smspp.satblock` when `SMSppMOD` is
   not empty (e.g., `make SMSppMOD=1`), with clang++ 16 or later [see
   `lib/makefile-mod` of SMS++]
@@ -57,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the linker imports a DLL only for the symbols asked for, so that a
   program that used none had the module left out and its classes
   missing from the factory
+
+- a change of the weights says that the feasible region shrinks when a
+  clause turns hard (weight +INF) and that it grows when one turns soft,
+  rather than that only the Objective changes: a reoptimization trusting
+  the latter skipped the infeasible part of its frontier, which a clause
+  turning soft may make feasible; `chg_weights()` says which of the two
+  happen, comparing the old weights with the new ones, and the type alone
+  says that both may
 
 - the makefiles of the tests and of the tools build also with g++: they
   take the option that stops at the first error and the one of the
