@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- the README points to the installation guide of the wiki
+  (Installing-SMS++) for the channels that distribute SMS++
+
 - the Modification of the module say what they change to the constructor
   of `Modification`, since `changes()` is no longer virtual and returns
   that value, which whoever forwards them can refine with `set_changes()`
