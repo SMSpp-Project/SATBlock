@@ -22,7 +22,8 @@ smspp_derive_version(SMSPP_MODULE_VERSION)
 
 project(SATBlock
         VERSION ${SMSPP_MODULE_VERSION}
-        DESCRIPTION "SMS++ Block for the satisfiability problems, SAT and weighted MaxSAT"
+        DESCRIPTION
+        "SMS++ Block for the satisfiability problems, SAT and weighted MaxSAT"
         HOMEPAGE_URL https://gitlab.com/smspp/satblock
         LANGUAGES C CXX)
 
@@ -108,6 +109,16 @@ if (BUILD_SHARED_LIBS)
         # the ELF linker decides by the symbols a regular object asks for, so
         # naming the symbol is not enough and the library has to be kept
         target_link_options(${modName} INTERFACE "LINKER:--no-as-needed")
+    elseif (APPLE)
+        # ld64 keeps a dylib that provides a symbol to the link, one asked
+        # for by -u included, even under -dead_strip_dylibs
+        target_link_options(${modName} INTERFACE
+                "LINKER:-u,_SMSpp_force_load_${modName}")
+    elseif (MINGW)
+        # the PE linker imports a DLL for the symbols asked for, -u
+        # included
+        target_link_options(${modName} INTERFACE
+                "LINKER:-u,SMSpp_force_load_${modName}")
     endif ()
 endif ()
 
@@ -169,12 +180,16 @@ if (SATBlock_USE_MINISAT)
     set(MINISAT_SHIM_DIR ${CMAKE_CURRENT_BINARY_DIR}/minisat-shim)
     file(READ ${MINISAT_INCLUDE_DIR}/minisat/core/SolverTypes.h
          _minisat_types)
-    string(REGEX REPLACE
-            "friend[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,[ \t]*bool[ \t]+sign[ \t]*=[ \t]*false[ \t]*\\)[ \t]*;"
+    string(CONCAT _friend
+            "friend[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,"
+            "[ \t]*bool[ \t]+sign[ \t]*=[ \t]*false[ \t]*\\)[ \t]*;")
+    string(REGEX REPLACE "${_friend}"
             "friend Lit mkLit(Var var, bool sign);"
             _minisat_types "${_minisat_types}")
-    string(REGEX REPLACE
-            "(inline[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,[ \t]*bool[ \t]+sign)([ \t]*\\)[ \t]*{)"
+    string(CONCAT _inline
+            "(inline[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,"
+            "[ \t]*bool[ \t]+sign)([ \t]*\\)[ \t]*{)")
+    string(REGEX REPLACE "${_inline}"
             "\\1 = false\\2"
             _minisat_types "${_minisat_types}")
     file(WRITE ${MINISAT_SHIM_DIR}/minisat/core/SolverTypes.h
@@ -277,7 +292,14 @@ if (Torch_FOUND)
             target_link_options(${modName}ML INTERFACE
                     "/INCLUDE:SMSpp_force_load_${modName}ML")
         elseif (UNIX AND (NOT APPLE))
-            target_link_options(${modName}ML INTERFACE "LINKER:--no-as-needed")
+            target_link_options(${modName}ML INTERFACE
+                    "LINKER:--no-as-needed")
+        elseif (APPLE)
+            target_link_options(${modName}ML INTERFACE
+                    "LINKER:-u,_SMSpp_force_load_${modName}ML")
+        elseif (MINGW)
+            target_link_options(${modName}ML INTERFACE
+                    "LINKER:-u,SMSpp_force_load_${modName}ML")
         endif ()
     endif ()
 
