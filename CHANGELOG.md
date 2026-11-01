@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `MiniSATSolver` builds also with the fork of MiniSat that vcpkg carries
+  (master-keying/minisat, whose `l_True` and `l_False` are macros and whose
+  final conflict is a vector instead of a set), which is the one it has on
+  Windows
+
 - the README points to the installation guide of the wiki
   (Installing-SMS++) for the channels that distribute SMS++
 
