@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-03
+
 ### Added
 
 - the tester checks what each physical Modification says it changes
@@ -322,6 +324,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assignment that makes the hard clauses satisfiable, written as WCNF or as a
   netCDF `SATBlock`; the same seed gives the same instance with any compiler
 
-[Unreleased]: https://gitlab.com/smspp/satblock/-/compare/0.2.0...develop
+[Unreleased]: https://gitlab.com/smspp/satblock/-/compare/0.3.0...develop
+[0.3.0]: https://gitlab.com/smspp/satblock/-/compare/0.2.0...0.3.0
 [0.2.0]: https://gitlab.com/smspp/satblock/-/compare/0.1.0...0.2.0
 [0.1.0]: https://gitlab.com/smspp/satblock/-/tags/0.1.0
