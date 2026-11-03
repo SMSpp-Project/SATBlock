@@ -1481,6 +1481,9 @@ static void test_x_only( void )
  b.generate_abstract_variables( & xonly );
  assert( b.has_variables() && ( ! b.has_violations() ) &&
 	 ( b.get_variables().size() == 3 ) );
+ // a minimization with no Objective, which is what an enumeration on the
+ // fixings of the x reads
+ assert( b.get_objective_sense() == Objective::eMin );
 
  // clauses and variables can still be added, the rows and the Objective
  // cannot be generated

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `get_objective_sense()` gives the minimization of the weighted MaxSAT
+  whatever of the abstract representation has been generated: with only
+  the x, which have no Objective, it gave `Objective::eUndef`, and a
+  `BranchAndXSolver` on the `SATSolver`, which reads there the sense of the
+  problem, took the bounds as those of a maximization, never pruned a node
+  and branched on one whose x were all fixed
+
 ## [0.3.0] - 2026-11-03
 
 ### Added

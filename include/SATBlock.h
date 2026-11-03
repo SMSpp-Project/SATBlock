@@ -424,6 +424,16 @@ class SATBlock : public Block
  void generate_objective( Configuration * objc = nullptr ) override;
 
 /*------------------ Methods for reading the data of the SATBlock ----------*/
+ /// the sense of the Objective, which is minimization
+ /** The weighted MaxSAT is a minimization, whatever of the abstract
+  * representation has been generated (e.g., only the x, which have no
+  * Objective). */
+
+ [[nodiscard]] int get_objective_sense( void ) const override {
+  return( Objective::eMin );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// returns the number of variables
 
  [[nodiscard]] unsigned int get_number_variables( void ) const {
