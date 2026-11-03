@@ -1048,7 +1048,8 @@ void SATBlock::chg_costs( MF_dbl_sp NCost , Range rng ,
   for( Index i = rng.first ; i < rng.second ; ++i )
    set_cost( i , NCost[ i - rng.first ] , issueAMod );
 
- if( issue_pmod( issueMod ) )
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eChgCost ) ) )
   add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 					SATBlockMod::eChgCost , rng ) ,
 		    Observer::par2chnl( issueMod ) );
@@ -1107,7 +1108,8 @@ void SATBlock::chg_costs( MF_dbl_sp NCost , Subset && nms , bool ordered ,
    }
   }
 
- if( issue_pmod( issueMod ) ) {
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eChgCost ) ) ) {
   for( Index k = 0 ; k < nc.size() ; ++k )
    nms[ k ] = nc[ k ].first;
   add_Modification( std::make_shared< SATBlockSbstMod >( this ,
@@ -1181,6 +1183,22 @@ void SATBlock::add_Modification( sp_Mod mod , ChnlName chnl )
  }
 
 /*--------------------------------------------------------------------------*/
+/// what giving the weight \p w to a clause of weight \p old changes
+/** The weight of a soft clause is in the Objective; a clause that turns
+ * hard (weight +INF) becomes a constraint, and the feasible region shrinks,
+ * while one that turns soft stops being one, and the region grows [see
+ * SATBlockMod::changes_of()]. */
+
+static Modification::ModConcern weight_changes( double old , double w )
+{
+ const double inf = Inf< double >();
+ if( ( old == inf ) == ( w == inf ) )
+  return( Modification::ePhysObj );
+ return( Modification::ePhysObj | Modification::eModCnsSide |
+	 ( w == inf ? Modification::eRegnShrink : Modification::eRegnGrow ) );
+ }
+
+/*--------------------------------------------------------------------------*/
 
 void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
 			    ModParam issueMod , ModParam issueAMod )
@@ -1211,14 +1229,23 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Range rng ,
 				 std::to_string( NWeight[ i - rng.first ] ) +
 				 " of clause " + std::to_string( i ) ) );
 
- if( not_dry_run( issueMod ) )
+ // what the change does, known before the weights change; in a dry run
+ // they have been changed already, and the type says all it may do
+ auto c = SATBlockMod::changes_of( SATBlockMod::eChgWeight );
+ if( not_dry_run( issueMod ) ) {
+  c = 0;
+  for( Index i = rng.first ; i < rng.second ; ++i )
+   c |= weight_changes( v_weights[ i ] , NWeight[ i - rng.first ] );
   for( Index i = rng.first ; i < rng.second ; ++i )
    set_weight( i , NWeight[ i - rng.first ] , issueAMod );
+  }
 
- if( issue_pmod( issueMod ) )
-  add_Modification( std::make_shared< SATBlockRngdMod >( this ,
-					SATBlockMod::eChgWeight , rng ) ,
-		    Observer::par2chnl( issueMod ) );
+ if( issue_pmod( issueMod , c ) ) {
+  auto mod = std::make_shared< SATBlockRngdMod >( this ,
+					    SATBlockMod::eChgWeight , rng );
+  mod->set_changes( c );
+  add_Modification( mod , Observer::par2chnl( issueMod ) );
+  }
  }
 
 /*--------------------------------------------------------------------------*/
@@ -1264,6 +1291,14 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
 			     ( is_hard( i ) ? "soft" : "hard" ) +
 			     " in the kRelaxation structure" ) );
 
+ // what the change does, known before the weights change [see above]
+ auto c = SATBlockMod::changes_of( SATBlockMod::eChgWeight );
+ if( not_dry_run( issueMod ) ) {
+  c = 0;
+  for( const auto & [ i , w ] : nw )
+   c |= weight_changes( v_weights[ i ] , w );
+  }
+
  if( not_dry_run( issueMod ) ) {
   if( f_structure == kNoStructure )
    for( const auto & [ i , w ] : nw )
@@ -1297,12 +1332,13 @@ void SATBlock::chg_weights( MF_dbl_sp NWeight , Subset && nms , bool ordered ,
    }
   }
 
- if( issue_pmod( issueMod ) ) {
+ if( issue_pmod( issueMod , c ) ) {
   for( Index k = 0 ; k < nw.size() ; ++k )
    nms[ k ] = nw[ k ].first;
-  add_Modification( std::make_shared< SATBlockSbstMod >( this ,
-			     SATBlockMod::eChgWeight , std::move( nms ) ) ,
-		    Observer::par2chnl( issueMod ) );
+  auto mod = std::make_shared< SATBlockSbstMod >( this ,
+			      SATBlockMod::eChgWeight , std::move( nms ) );
+  mod->set_changes( c );
+  add_Modification( mod , Observer::par2chnl( issueMod ) );
   }
  }
 
@@ -1387,7 +1423,8 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
    group_Block( g ).add_clauses( std::move( cw.first ) ,
 				 std::move( cw.second ) , issueMod , issueAMod );
 
-  if( issue_pmod( issueMod ) )
+  if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                  SATBlockMod::eAddClauses ) ) )
    add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 				     SATBlockMod::eAddClauses ,
 				     Range( first , v_clauses.size() ) ) ,
@@ -1425,7 +1462,8 @@ void SATBlock::add_clauses( v_Clause && clauses , v_Weight && weights ,
    }
   }
 
- if( issue_pmod( issueMod ) )
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eAddClauses ) ) )
   add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 			     SATBlockMod::eAddClauses ,
 			     Range( first , v_clauses.size() ) ) ,
@@ -1477,7 +1515,8 @@ void SATBlock::add_variables( unsigned int k , ModParam issueMod ,
    }
   }
 
- if( issue_pmod( issueMod ) )
+ if( issue_pmod( issueMod , SATBlockMod::changes_of(
+                 SATBlockMod::eAddVariables ) ) )
   add_Modification( std::make_shared< SATBlockRngdMod >( this ,
 			     SATBlockMod::eAddVariables ,
 			     Range( first , f_n_var ) ) ,
@@ -1490,12 +1529,9 @@ void SATBlock::guts_of_destructor( void )
 {
  // the rows and the Objective go before the ColVariable they are active in,
  // and are told not to bother with them, both going away together
- for( auto & c : v_c )
-  c.clear();
- for( auto & c : l_c )
-  c.clear();
- for( auto & c : v_link_c )
-  c.clear();
+ Constraint::clear( v_c );
+ Constraint::clear( l_c );
+ Constraint::clear( v_link_c );
  f_obj.clear();
 
  reset_objective();
@@ -1503,9 +1539,6 @@ void SATBlock::guts_of_destructor( void )
  reset_static_constraints();
  reset_dynamic_variables();
  reset_static_variables();
- l_c.clear();
- v_c.clear();
- v_link_c.clear();
  l_r.clear();
  v_r.clear();
  v_x.clear();

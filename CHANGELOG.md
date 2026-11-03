@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-03
+
+### Added
+
+- the tester checks what each physical Modification says it changes
+  (`changes()`) against what the change does to the model, written down in
+  the tester, for every type of `SATBlockMod` and for clauses turning
+  hard and soft
+
+- the makefiles build the C++20 module `smspp.satblock` when `SMSppMOD` is
+  not empty (e.g., `make SMSppMOD=1`), with clang++ 16 or later [see
+  `lib/makefile-mod` of SMS++]
+
+- the C++20 module `smspp.satblock` (`src/SATBlock.cppm`), which exports
+  every name that the headers declare at namespace scope and re-exports
+  `smspp`, so that a source file can write `import smspp.satblock;` in place
+  of the `#include` of the headers; it is built with the CMake option
+  `SMSpp_BUILD_MODULE`, as the target `SMS++::SATBlock_module`.
+  `GQSATBranchRule`, which needs Torch, is not in it
+
+### Changed
+
+- `MiniSATSolver` builds also with the fork of MiniSat that vcpkg carries
+  (master-keying/minisat, whose `l_True` and `l_False` are macros and whose
+  final conflict is a vector instead of a set), which is the one it has on
+  Windows
+
+- the README points to the installation guide of the wiki
+  (Installing-SMS++) for the channels that distribute SMS++
+
+- the Modification of the module say what they change to the constructor
+  of `Modification`, since `changes()` is no longer virtual and returns
+  that value, which whoever forwards them can refine with `set_changes()`
+
+- the pipeline builds the module also with its makefiles, after CMake, and
+  runs on a change of the makefiles too [see `ci/makefile` of the umbrella]
+
+- `SMSpp_BUILD_MODULE` no longer stops the configuration when the C++20
+  module cannot be built, i.e., with a CMake older than 3.28, a generator
+  other than Ninja or Visual Studio, a compiler other than Clang 16 (with
+  `clang-scan-deps`) or MSVC 19.34, or a module it imports that is not
+  there: the option is turned off with a warning that says why, and the
+  build goes on with the headers [see `cmake/CheckModule.cmake` of SMS++]
+
+- the instances of `data/` are downloaded and extracted by the targets
+  `download_sat_<fmt>` and `extract_sat_<fmt>`, written as in every module
+  that keeps its instances in the Package Registry, and the marker of the
+  extraction carries the format in its name, so that a tree extracted
+  before extracts once more; `fetch_sat_data` is now `extract_sat_cnf` and
+  `extract_sat_wcnf`, which the unit test builds when it is run, by the
+  tests `SATBlock_extract_sat_cnf` and `SATBlock_extract_sat_wcnf` it
+  requires as fixtures, and no longer when it is built
+
+### Removed
+
+- `SATSolver::classify()`, together with the method of RelaxationSolver
+  it implemented: what a `SATBlockMod` changes is said by its `changes()`
+
+### Fixed
+
+- on Windows, the executables that copy their DLLs next to themselves
+  are linked one at a time (a job pool of Ninja), since two copies of the
+  same DLL into one directory collided (e.g., with the clang++ of MSYS2)
+
+- with the compilers of MinGW (MSYS2) the target asks whoever links it
+  for the symbol that forces the module in, as with MSVC and on macOS:
+  the linker imports a DLL only for the symbols asked for, so that a
+  program that used none had the module left out and its classes
+  missing from the factory
+
+- a change of the weights says that the feasible region shrinks when a
+  clause turns hard (weight +INF) and that it grows when one turns soft,
+  rather than that only the Objective changes: a reoptimization trusting
+  the latter skipped the infeasible part of its frontier, which a clause
+  turning soft may make feasible; `chg_weights()` says which of the two
+  happen, comparing the old weights with the new ones, and the type alone
+  says that both may
+
+- the makefiles of the tests and of the tools build also with g++: they
+  take the option that stops at the first error and the one of the
+  debugging information, which clang++ and g++ spell differently
+  (`-ferror-limit=1` and `-glldb` against `-fmax-errors=1` and `-ggdb`),
+  from `SMSppSWERR` and `SMSppSWDBG` of `lib/makefile-OS` of SMS++
+
+- `FindCaDiCaL.cmake` looks for the library first next to the header it
+  has found: with 2 versions of CaDiCaL on the system (one of the
+  distribution and one built by hand) it took the header of the one and the
+  library of the other, and SATBlock did not link
+- `SATBlock_USE_CADICAL` and `SATBlock_USE_MINISAT` tell whoever adds the
+  module as a subdirectory (the umbrella, and the directories it adds after
+  it) whether the SAT solver was found, as they tell whoever finds the
+  installed module: they stayed at the value of the option, ON, also when
+  `CaDiCaLSATSolver` or `MiniSATSolver` was not built
+- `FindCaDiCaL.cmake` also looks for the header in `include/cadical`, where
+  the packages of some distributions (e.g., Arch) put it, and then for the
+  library in the prefix above that directory: CaDiCaL was not found there
+
 ## [0.2.0] - 2026-10-09
 
 ### Added
@@ -227,6 +324,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assignment that makes the hard clauses satisfiable, written as WCNF or as a
   netCDF `SATBlock`; the same seed gives the same instance with any compiler
 
-[Unreleased]: https://gitlab.com/smspp/satblock/-/compare/0.2.0...develop
+[Unreleased]: https://gitlab.com/smspp/satblock/-/compare/0.3.0...develop
+[0.3.0]: https://gitlab.com/smspp/satblock/-/compare/0.2.0...0.3.0
 [0.2.0]: https://gitlab.com/smspp/satblock/-/compare/0.1.0...0.2.0
 [0.1.0]: https://gitlab.com/smspp/satblock/-/tags/0.1.0

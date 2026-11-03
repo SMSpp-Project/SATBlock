@@ -6,9 +6,10 @@
  * hand-made cases and on an instance of the SATLIB collection, the abstract
  * representation, the feasibility check and the violated weight, the
  * Solution, the round trips through netCDF and through the writer, the
- * changes of the weights and the added clauses, the structures out of the
- * groups of the variables, and the SATSolver, OLL included, on random
- * instances and on instances of the MaxSAT Evaluation.
+ * changes of the weights and the added clauses, what each physical
+ * Modification says it changes [see Modification::changes()], the
+ * structures out of the groups of the variables, and the SATSolver, OLL
+ * included, on random instances and on instances of the MaxSAT Evaluation.
  *
  * \author Donato Meoli \n
  *         Dipartimento di Informatica \n
@@ -25,12 +26,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include "ColVariableSolution.h"
+#include "FakeSolver.h"
 #include "LinearFunction.h"
 #include "SATBlock.h"
 #if defined( SATBLOCK_HAS_CADICAL ) || defined( SATBLOCK_HAS_MINISAT )
@@ -882,6 +887,70 @@ static void test_modifications( void )
   assert( objective_value( b ) == b.get_violated_weight() +
 	  ( ( mask >> 3 ) & 1 ) * 7 );
   }
+ }
+
+/*--------------------------------------------------------------------------*/
+/// what each SATBlockMod says it changes [see Modification::changes()],
+/// against what the change does to the model, written down here: the costs
+/// and the weights of the clauses are the Objective, a clause turning hard
+/// shrinks the feasible region and one turning soft enlarges it, and adding
+/// clauses shrinks it
+
+static void test_changes( void )
+{
+ using M = Modification;
+ const auto inf = Inf< double >();
+ SATBlock b;
+ load_string( b , "h 1 2 0\n5 -1 0\n3 -2 0\n" );
+ FakeSolver fs;
+ b.register_Solver( & fs );
+
+ // the call issues exactly one SATBlockMod, of type t, saying it changes c
+ const auto one = [ & ]( const std::function< void( void ) > & call , int t ,
+			 M::ModConcern c ) {
+  fs.lock_Modification_list();
+  fs.get_Modification_list().clear();
+  fs.unlock_Modification_list();
+  call();
+  std::vector< std::shared_ptr< SATBlockMod > > got;
+  fs.lock_Modification_list();
+  for( auto & mod : fs.get_Modification_list() )
+   if( auto sm = std::dynamic_pointer_cast< SATBlockMod >( mod ) )
+    got.push_back( sm );
+  fs.get_Modification_list().clear();
+  fs.unlock_Modification_list();
+  assert( got.size() == 1 );
+  assert( got.front()->type() == t );
+  assert( got.front()->changes() == c );
+  };
+
+ const auto obj = M::eModPhys | M::eModObj | M::eObjUp | M::eObjDown;
+ const auto hard = obj | M::eModCnsSide | M::eRegnShrink;
+ const auto soft = obj | M::eModCnsSide | M::eRegnGrow;
+
+ // soft to soft, soft to hard, hard to soft, by Range and by Subset
+ std::vector< double > w = { 4 };
+ one( [ & ]() { b.chg_weights( w , Block::Range( 1 , 2 ) ); } ,
+      SATBlockMod::eChgWeight , obj );
+ w = { inf };
+ one( [ & ]() { b.chg_weights( w , Block::Range( 1 , 2 ) ); } ,
+      SATBlockMod::eChgWeight , hard );
+ w = { 2 };
+ one( [ & ]() { b.chg_weights( w , Block::Subset{ 1 } ); } ,
+      SATBlockMod::eChgWeight , soft );
+ // one clause turning soft and one hard: the region may do either
+ w = { inf , 7 };
+ one( [ & ]() { b.chg_weights( w , Block::Subset{ 2 , 0 } ); } ,
+      SATBlockMod::eChgWeight , hard | soft );
+
+ std::vector< double > c = { 3 };
+ one( [ & ]() { b.chg_costs( c , Block::Range( 0 , 1 ) ); } ,
+      SATBlockMod::eChgCost , obj );
+ one( [ & ]() { b.add_clauses( { { 1 , -2 } } , { 6 } ); } ,
+      SATBlockMod::eAddClauses , M::eModPhys | M::eModCnsSet |
+                                 M::eRegnShrink );
+
+ b.unregister_Solver( & fs );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -1830,6 +1899,7 @@ int main( int argc , char ** argv )
  test_solution();
  test_round_trips();
  test_modifications();
+ test_changes();
  test_costs();
  test_structure();
  test_satlib();

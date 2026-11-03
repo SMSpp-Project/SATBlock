@@ -533,12 +533,6 @@ class SATSolver : public Solver , public RelaxationSolver
  std::vector< Change * > branch( void ) override;
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
- /// a change of the costs only touches the objective, anything else may do
- /// more
-
- [[nodiscard]] int classify( const sp_Mod & mod ) override;
-
-/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// the value of the best solution found, +INF if none
 
  [[nodiscard]] OFValue get_true_ub( void ) override {

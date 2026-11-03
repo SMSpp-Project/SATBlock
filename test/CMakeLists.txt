@@ -33,9 +33,6 @@ endif ()
 
 add_executable(${modName}_unit_test test.cpp)
 
-# the instances the test reads are downloaded first [see the CMakeLists.txt of
-# the module]
-add_dependencies(${modName}_unit_test fetch_sat_data)
 target_link_libraries(${modName}_unit_test PRIVATE ${modNamespace}::${modName})
 if (SATBlock_USE_CADICAL)
     target_compile_definitions(${modName}_unit_test PRIVATE
@@ -56,6 +53,14 @@ if (WIN32 AND BUILD_SHARED_LIBS AND NOT DEFINED ENV{CONDA_BUILD})
             $<TARGET_FILE_DIR:${modName}_unit_test>
             COMMAND_EXPAND_LISTS
             COMMENT "Copying runtime DLLs next to ${modName}_unit_test.exe")
+    # one link at a time, since two copies of the same DLL into a
+    # directory collide, and Ninja links in parallel
+    get_property(_pools GLOBAL PROPERTY JOB_POOLS)
+    if (NOT _pools MATCHES "smspp_runtime_dlls=")
+        set_property(GLOBAL APPEND PROPERTY JOB_POOLS smspp_runtime_dlls=1)
+    endif ()
+    set_property(TARGET ${modName}_unit_test
+                 PROPERTY JOB_POOL_LINK smspp_runtime_dlls)
 endif ()
 
 add_test(NAME ${modName}_unit_test
@@ -66,6 +71,22 @@ add_test(NAME ${modName}_unit_test
 # module with `ctest -L <module>` (see tests/cmake/TestLabels.cmake in the
 # umbrella for the system-tests counterpart).
 set_tests_properties(${modName}_unit_test PROPERTIES LABELS "${modName}")
+
+# the instances of the module, downloaded and extracted when the tests that
+# read them are run, not when they are built [see the CMakeLists.txt of the
+# module]; the lock is shared by the tests that build a target of the data of
+# the module, which under ctest -j would write the same files at once
+foreach (fmt cnf wcnf)
+    add_test(NAME ${modName}_extract_sat_${fmt}
+             COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                     --target extract_sat_${fmt})
+    set_tests_properties(${modName}_extract_sat_${fmt} PROPERTIES
+                         FIXTURES_SETUP sat_${fmt}_extracted
+                         RESOURCE_LOCK sat_data
+                         LABELS "${modName}")
+endforeach ()
+set_tests_properties(${modName}_unit_test PROPERTIES FIXTURES_REQUIRED
+                     "sat_cnf_extracted;sat_wcnf_extracted")
 
 # SATBlockML, if it is built: the learned SATBranchRule
 if (TARGET ${modNamespace}::${modName}ML)

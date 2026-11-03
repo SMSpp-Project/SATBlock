@@ -23,7 +23,10 @@
 #    CaDiCaL installs no CMake configuration file. Both an installed one      #
 #    (include/cadical.hpp, lib/libcadical) and a source tree built as its     #
 #    own configure script does (src/cadical.hpp, build/libcadical.a) are      #
-#    found.                                                                   #
+#    found. The library is looked for first next to the header that has been  #
+#    found, since with two versions of CaDiCaL on the system (say, one of     #
+#    the distribution and one built by hand) the header of the one and the    #
+#    library of the other do not link.                                        #
 #                                                                             #
 #                                Donato Meoli                                 #
 #                         Dipartimento di Informatica                         #
@@ -31,15 +34,27 @@
 # --------------------------------------------------------------------------- #
 include(FindPackageHandleStandardArgs)
 
+# the header is in include/ of an install, in include/cadical/ of the
+# packages of some distributions (e.g., Arch), in src/ of a checkout
 find_path(CADICAL_INCLUDE_DIR
           NAMES cadical.hpp
           HINTS ${CADICAL_ROOT} ENV CADICAL_ROOT
-          PATH_SUFFIXES include src
+          PATH_SUFFIXES include include/cadical src
           DOC "CaDiCaL include directory.")
+
+# the prefix of the header, i.e., the parent of include/ or of src/
+if (CADICAL_INCLUDE_DIR)
+    get_filename_component(_cadical_prefix "${CADICAL_INCLUDE_DIR}" DIRECTORY)
+    get_filename_component(_cadical_name "${_cadical_prefix}" NAME)
+    if (_cadical_name STREQUAL "include")
+        get_filename_component(_cadical_prefix "${_cadical_prefix}" DIRECTORY)
+    endif ()
+    unset(_cadical_name)
+endif ()
 
 find_library(CADICAL_LIBRARY
              NAMES cadical
-             HINTS ${CADICAL_ROOT} ENV CADICAL_ROOT
+             HINTS ${_cadical_prefix} ${CADICAL_ROOT} ENV CADICAL_ROOT
              PATH_SUFFIXES lib/${CMAKE_LIBRARY_ARCHITECTURE} lib build
              DOC "CaDiCaL library.")
 
@@ -58,4 +73,5 @@ if (CaDiCaL_FOUND)
     endif ()
 endif ()
 
+unset(_cadical_prefix)
 mark_as_advanced(CADICAL_INCLUDE_DIR CADICAL_LIBRARY)

@@ -22,7 +22,8 @@ smspp_derive_version(SMSPP_MODULE_VERSION)
 
 project(SATBlock
         VERSION ${SMSPP_MODULE_VERSION}
-        DESCRIPTION "SMS++ Block for the satisfiability problems, SAT and weighted MaxSAT"
+        DESCRIPTION
+        "SMS++ Block for the satisfiability problems, SAT and weighted MaxSAT"
         HOMEPAGE_URL https://gitlab.com/smspp/satblock
         LANGUAGES C CXX)
 
@@ -108,6 +109,16 @@ if (BUILD_SHARED_LIBS)
         # the ELF linker decides by the symbols a regular object asks for, so
         # naming the symbol is not enough and the library has to be kept
         target_link_options(${modName} INTERFACE "LINKER:--no-as-needed")
+    elseif (APPLE)
+        # ld64 keeps a dylib that provides a symbol to the link, one asked
+        # for by -u included, even under -dead_strip_dylibs
+        target_link_options(${modName} INTERFACE
+                "LINKER:-u,_SMSpp_force_load_${modName}")
+    elseif (MINGW)
+        # the PE linker imports a DLL for the symbols asked for, -u
+        # included
+        target_link_options(${modName} INTERFACE
+                "LINKER:-u,SMSpp_force_load_${modName}")
     endif ()
 endif ()
 
@@ -169,12 +180,16 @@ if (SATBlock_USE_MINISAT)
     set(MINISAT_SHIM_DIR ${CMAKE_CURRENT_BINARY_DIR}/minisat-shim)
     file(READ ${MINISAT_INCLUDE_DIR}/minisat/core/SolverTypes.h
          _minisat_types)
-    string(REGEX REPLACE
-            "friend[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,[ \t]*bool[ \t]+sign[ \t]*=[ \t]*false[ \t]*\\)[ \t]*;"
+    string(CONCAT _friend
+            "friend[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,"
+            "[ \t]*bool[ \t]+sign[ \t]*=[ \t]*false[ \t]*\\)[ \t]*;")
+    string(REGEX REPLACE "${_friend}"
             "friend Lit mkLit(Var var, bool sign);"
             _minisat_types "${_minisat_types}")
-    string(REGEX REPLACE
-            "(inline[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,[ \t]*bool[ \t]+sign)([ \t]*\\)[ \t]*{)"
+    string(CONCAT _inline
+            "(inline[ \t]+Lit[ \t]+mkLit[ \t]*\\([ \t]*Var[ \t]+var[ \t]*,"
+            "[ \t]*bool[ \t]+sign)([ \t]*\\)[ \t]*{)")
+    string(REGEX REPLACE "${_inline}"
             "\\1 = false\\2"
             _minisat_types "${_minisat_types}")
     file(WRITE ${MINISAT_SHIM_DIR}/minisat/core/SolverTypes.h
@@ -185,6 +200,14 @@ if (SATBlock_USE_MINISAT)
     target_link_libraries(${modName} PRIVATE MiniSat::MiniSat)
 else ()
     message(STATUS "MiniSATSolver: MiniSat not found, not built")
+endif ()
+
+# Whoever adds this module as a subdirectory (the umbrella, and through it
+# tests/ and experiments/) is told which SAT solvers it was built with, as
+# whoever finds the installed one is [see cmake/SATBlockConfig.cmake.in].
+if (hasParent)
+    set(SATBlock_USE_CADICAL ${SATBlock_USE_CADICAL} PARENT_SCOPE)
+    set(SATBlock_USE_MINISAT ${SATBlock_USE_MINISAT} PARENT_SCOPE)
 endif ()
 
 # When using target_include_directories(), PUBLIC means that any targets
@@ -214,6 +237,39 @@ target_link_libraries(${modName} PUBLIC ${modNamespace}::SMS++)
 # the library with this notation.
 add_library(${modNamespace}::${modName} ALIAS ${modName})
 
+# ----- C++20 module -------------------------------------------------------- #
+# The module smspp.satblock (src/SATBlock.cppm) exports the names of the
+# headers and re-exports smspp; like the module smspp of the core, it is built
+# when SMSpp_BUILD_MODULE is ON, which needs CMake 3.28 or later, the Ninja or
+# Visual Studio generator and a compiler that scans the dependencies of the
+# modules.
+# Where these are missing, or a module it imports is not there, the option
+# is turned off with a warning [see CheckModule.cmake of SMS++].
+smspp_check_module(${modNamespace}::SMS++_module)
+if (SMSpp_BUILD_MODULE)
+    # the scan of the module dependencies, and $<LINK_ONLY> honoured also for
+    # the target itself, which cmake_policy(VERSION 3.15) above leaves off
+    cmake_policy(SET CMP0155 NEW)
+    cmake_policy(SET CMP0131 NEW)
+
+    add_library(${modName}_module)
+    target_sources(${modName}_module PUBLIC
+            FILE_SET CXX_MODULES
+            BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+            FILES src/${modName}.cppm)
+    target_compile_features(${modName}_module PUBLIC cxx_std_20)
+    # the interface takes the include paths and the definitions of the
+    # library, but not its compile options (e.g., the -fopenmp of a source,
+    # which no header needs), so that it agrees with the module it imports
+    target_include_directories(${modName}_module PRIVATE
+            $<TARGET_PROPERTY:${modName},INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(${modName}_module PRIVATE
+            $<TARGET_PROPERTY:${modName},INTERFACE_COMPILE_DEFINITIONS>)
+    target_link_libraries(${modName}_module PUBLIC $<LINK_ONLY:${modName}>
+            ${modNamespace}::SMS++_module)
+    add_library(${modNamespace}::${modName}_module ALIAS ${modName}_module)
+endif ()
+
 # ----- SATBlockML ---------------------------------------------------------- #
 # The learned SATBranchRule (GQSATBranchRule) is a library of its own, built
 # only if Torch is found: Torch is some hundreds of megabytes of shared
@@ -236,7 +292,14 @@ if (Torch_FOUND)
             target_link_options(${modName}ML INTERFACE
                     "/INCLUDE:SMSpp_force_load_${modName}ML")
         elseif (UNIX AND (NOT APPLE))
-            target_link_options(${modName}ML INTERFACE "LINKER:--no-as-needed")
+            target_link_options(${modName}ML INTERFACE
+                    "LINKER:--no-as-needed")
+        elseif (APPLE)
+            target_link_options(${modName}ML INTERFACE
+                    "LINKER:-u,_SMSpp_force_load_${modName}ML")
+        elseif (MINGW)
+            target_link_options(${modName}ML INTERFACE
+                    "LINKER:-u,SMSpp_force_load_${modName}ML")
         endif ()
     endif ()
 
@@ -258,26 +321,40 @@ else ()
 endif ()
 
 # ----- Data ---------------------------------------------------------------- #
-# The instances the tests read, in two archives of the GitLab Package
-# Registry: cnf.tgz, a selection of the SATLIB collection, and wcnf.tgz, the
+# The instances are a selection of the SATLIB collection (cnf) and the
 # smallest instance of each family of the exact weighted track of the MaxSAT
-# Evaluation 2024 with the optimum RC2 finds for it [see data/wcnf/README].
-# Each is downloaded and extracted into data/ once per version.
-
-# The version of the archives in the Package Registry. A published version is
-# never replaced: new data go out under a new version, written here first [see
-# data/upload], and the archives and the markers of their extraction carry it
-# in their name, so that a tree holding the data of an older version (a cache
-# of the CI, or a clone that has been extracted before) downloads and extracts
-# again instead of taking them for the current ones.
+# Evaluation 2024 with the optimum RC2 finds for it (wcnf) [see
+# data/wcnf/README].
+#
+# The instances the tests read are, for each <fmt> of DATA_FORMATS, the
+# archive <fmt>.tgz in the GitLab Package Registry of the project
+# DATA_PROJECT, extracted into data/<fmt>. Nothing of this is built with the
+# module: extract_<DATA_PREFIX>_<fmt> downloads the archive (by building
+# download_<DATA_PREFIX>_<fmt>) and extracts it, and it is built when the
+# tests that read the instances are run, by a test that sets up the fixture
+# <DATA_PREFIX>_<fmt>_extracted they require.
+#
+# A published version is never replaced: new data go out under a new
+# version, written here first [see the upload scripts in data/], and the
+# archive and the marker of its extraction carry it in their name, so that a
+# tree holding the data of an older version (a cache of the CI, or a clone
+# that has been extracted before) downloads and extracts again instead of
+# taking them for the current ones.
 set(DATA_VERSION 2026-09-26)
+set(DATA_PROJECT 86936161)
+set(DATA_PREFIX sat)
+set(DATA_FORMATS cnf wcnf)
 
-set(DATA_MARKERS)
-foreach (fmt cnf wcnf)
-    set(url "https://gitlab.com/api/v4/projects/86936161/packages/generic/${fmt}/${DATA_VERSION}/${fmt}.tgz")
+foreach (fmt ${DATA_FORMATS})
+    set(url "https://gitlab.com/api/v4/projects/${DATA_PROJECT}/packages/\
+generic/${fmt}/${DATA_VERSION}/${fmt}.tgz")
     set(archive ${CMAKE_CURRENT_SOURCE_DIR}/data/${fmt}-${DATA_VERSION}.tgz)
-    set(marker ${CMAKE_CURRENT_SOURCE_DIR}/data/.extracted-${fmt}-${DATA_VERSION})
-    set(script ${CMAKE_CURRENT_BINARY_DIR}/download_sat_${fmt}.cmake)
+    set(script
+        ${CMAKE_CURRENT_BINARY_DIR}/download_${DATA_PREFIX}_${fmt}.cmake)
+    # the marker of the extraction, on which what is made from the instances
+    # depends too
+    set(DATA_MARKER_${fmt}
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/.extracted-${fmt}-${DATA_VERSION})
 
     file(WRITE ${script} "
 file(DOWNLOAD \"${url}\" \"${archive}\" SHOW_PROGRESS STATUS _status)
@@ -303,21 +380,23 @@ endif()
             COMMAND ${CMAKE_COMMAND} -P ${script}
             COMMENT "Downloading ${fmt}.tgz from the GitLab Package Registry"
             VERBATIM)
+    add_custom_target(download_${DATA_PREFIX}_${fmt} DEPENDS ${archive})
 
     add_custom_command(
-            OUTPUT ${marker}
+            OUTPUT ${DATA_MARKER_${fmt}}
             COMMAND ${CMAKE_COMMAND} -E tar xzf ${archive}
-            COMMAND ${CMAKE_COMMAND} -E touch ${marker}
+            COMMAND ${CMAKE_COMMAND} -E touch ${DATA_MARKER_${fmt}}
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
             COMMENT "Extracting ${fmt}.tgz"
             VERBATIM
             DEPENDS ${archive})
-
-    list(APPEND DATA_MARKERS ${marker})
+    add_custom_target(extract_${DATA_PREFIX}_${fmt}
+                      DEPENDS ${DATA_MARKER_${fmt}})
+    # the archive is the output of a command in both targets: it has to be
+    # downloaded once, before it is extracted
+    add_dependencies(extract_${DATA_PREFIX}_${fmt}
+                     download_${DATA_PREFIX}_${fmt})
 endforeach ()
-
-# the target the test depends on: both archives downloaded and extracted
-add_custom_target(fetch_sat_data DEPENDS ${DATA_MARKERS})
 
 # ----- Tests --------------------------------------------------------------- #
 if (BUILD_TESTING)
@@ -354,6 +433,17 @@ install(TARGETS ${modName}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} # .dll
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} # .so .dylib
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}) # .lib
+
+# Install the module, whose interface is compiled again by each importer
+if (SMSpp_BUILD_MODULE)
+    install(TARGETS ${modName}_module
+            EXPORT ${modName}Targets
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            FILE_SET CXX_MODULES
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${modNamespace}/modules)
+endif ()
 
 # Install the headers, that of SATBlockML only if it is built
 if (Torch_FOUND)

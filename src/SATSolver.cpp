@@ -1161,16 +1161,6 @@ std::vector< double > SATSolver::core_scores( void ) const
  }
 
 /*--------------------------------------------------------------------------*/
-
-int SATSolver::classify( const sp_Mod & mod )
-{
- if( auto smod = std::dynamic_pointer_cast< const SATBlockMod >( mod ) )
-  if( smod->type() == SATBlockMod::eChgCost )
-   return( eModObjective );
- return( eModEverything );
- }
-
-/*--------------------------------------------------------------------------*/
 /*----------------------- METHODS OF SATResidualGraph ----------------------*/
 /*--------------------------------------------------------------------------*/
 

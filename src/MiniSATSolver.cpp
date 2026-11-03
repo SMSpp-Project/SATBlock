@@ -53,6 +53,32 @@ Minisat::Lit to_lit( Minisat::Solver & s , int lit )
  return( Minisat::mkLit( v , lit < 0 ) );
  }
 
+/// 10, 20 or 0 for an answer of MiniSat that is true, false or undefined;
+/// l_True and l_False, constants in stp/minisat and macros in the fork that
+/// vcpkg carries, are named so that both are found
+
+int sat_code( Minisat::lbool res )
+{
+ using namespace Minisat;
+ return( res == l_True ? 10 : ( res == l_False ? 20 : 0 ) );
+ }
+
+/// whether the final conflict holds the literal l: it is a set in
+/// stp/minisat and a vector to scan in the fork that vcpkg carries
+
+template< class Conflict >
+bool in_conflict( Conflict & conflict , Minisat::Lit l )
+{
+ if constexpr( requires { conflict.has( l ); } )
+  return( conflict.has( l ) );
+ else {
+  for( int i = 0 ; i < conflict.size() ; ++i )
+   if( conflict[ i ] == l )
+    return( true );
+  return( false );
+  }
+ }
+
 }  // end( unnamed namespace )
 
 /*--------------------------------------------------------------------------*/
@@ -103,23 +129,20 @@ int MiniSATSolver::sat_solve( const std::vector< int > & assumptions ,
   f_solver->setConfBudget( conflicts );
   const auto res = f_solver->solveLimited( as );
   f_solver->budgetOff();
-  return( res == Minisat::l_True ? 10 : ( res == Minisat::l_False ? 20 : 0 ) );
+  return( sat_code( res ) );
   }
 
  if( ! ( MaxTime < Inf< double >() ) ) {
   f_solver->budgetOff();
   const auto res = f_solver->solveLimited( as );
-  return( res == Minisat::l_True ? 10 : ( res == Minisat::l_False ? 20 : 0 ) );
+  return( sat_code( res ) );
   }
 
  // solve a budget of conflicts at a time, checking the time in between
  for( ; ; ) {
   f_solver->setConfBudget( ConflictBudget );
-  const auto res = f_solver->solveLimited( as );
-  if( res == Minisat::l_True )
-   return( 10 );
-  if( res == Minisat::l_False )
-   return( 20 );
+  if( const int code = sat_code( f_solver->solveLimited( as ) ) )
+   return( code );
   if( time_is_up() )
    return( 0 );
   }
@@ -131,7 +154,7 @@ bool MiniSATSolver::sat_value( int var ) const
 {
  // a variable in no clause is unknown to MiniSat, and it is false
  return( ( var <= f_solver->nVars() ) &&
-	 ( f_solver->modelValue( var - 1 ) == Minisat::l_True ) );
+	  ( sat_code( f_solver->modelValue( var - 1 ) ) == 10 ) );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -141,7 +164,7 @@ bool MiniSATSolver::sat_failed( int lit ) const
  // the final conflict holds the negation of the failed assumptions
  const Minisat::Lit l = Minisat::mkLit( std::abs( lit ) - 1 , lit < 0 );
  return( ( std::abs( lit ) <= f_solver->nVars() ) &&
-	 f_solver->conflict.has( ~l ) );
+	  in_conflict( f_solver->conflict , ~l ) );
  }
 
 /*--------------------------------------------------------------------------*/

@@ -967,11 +967,38 @@ class SATBlockMod : public Modification
   eAddVariables     ///< some variables have been added
   };
 
+ /// what a Modification of the given type changes
+ /** What a Modification of the given type changes of the model [see
+  * Modification::ModConcern], which is what changes() says and what the
+  * methods that issue it ask before issuing it [see
+  * Observer::issue_pmod()]: the costs of the variables are the Objective,
+  * and so are the weights of the clauses, except that a clause turning hard
+  * (weight +INF) makes the feasible region shrink and one turning soft makes
+  * it grow: the type says that both may happen, and chg_weights() says
+  * which do when it knows the old weights; adding clauses makes the feasible
+  * region shrink, and adding variables may change anything. */
+
+ static ModConcern changes_of( int type ) {
+  switch( type ) {
+   case( eChgWeight ):
+    return( ePhysObj | eModCnsSide | eRegnShrink | eRegnGrow );
+   case( eChgCost ):
+    return( ePhysObj );
+   case( eAddClauses ):
+    return( eModPhys | eModCnsSet | eRegnShrink );
+   case( eAddVariables ):
+    return( eModPhys | eEffAny );
+   default:
+    return( eModPhys | eEffAny );
+   }
+  }
+
 /*------------------------ CONSTRUCTOR & DESTRUCTOR ------------------------*/
  /// constructor: takes the SATBlock and the type
 
  SATBlockMod( SATBlock * const fblock , int type )
-  : f_Block( fblock ) , f_type( type ) {}
+  : Modification( changes_of( type ) ) ,
+    f_Block( fblock ) , f_type( type ) {}
 
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// destructor, does nothing
