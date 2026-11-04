@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `SATBlock.h` compiles without warnings under `-Wall`: the `load()` of a
-  stream no longer hides `Block::load()` of a file name
+- `SATBlock.h` and `smspp_satpart` compile without warnings under `-Wall`:
+  the `load()` of a stream no longer hides `Block::load()` of a file name,
+  and the `else` in the aggregation of the graph of `smspp_satpart` is
+  braced with the `if` it belongs to
 
 ## [0.3.1] - 2026-11-03
 
