@@ -140,6 +140,12 @@ target_sources(${modName} PRIVATE
 # the SAT solvers are linked PRIVATE.
 target_sources(${modName} PRIVATE src/SATSolver.cpp)
 
+# CADICAL_ROOT and MINISAT_ROOT, which the Find modules read, are also
+# prefixes of find_package()
+if (POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif ()
+
 if (SATBlock_USE_CADICAL)
     find_package(CaDiCaL)
     if (NOT CaDiCaL_FOUND)

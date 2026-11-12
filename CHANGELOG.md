@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `load()` of a stream no longer hides `Block::load()` of a file name,
   and the `else` in the aggregation of the graph of `smspp_satpart` is
   braced with the `if` it belongs to
+- the configuration no longer warns that policy CMP0144 is not set when
+  `MINISAT_ROOT` or `CADICAL_ROOT` is given: they are also prefixes of
+  `find_package()`
 
 ## [0.3.1] - 2026-11-03
 
