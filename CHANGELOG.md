@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- the installed module `smspp.satblock` could not be imported, since its
+  package gave the interface of the module the target of the library by its
+  name in the build tree, which an installed package does not have
+
 - `SATBlock.h` and `smspp_satpart` compile without warnings under `-Wall`:
   the `load()` of a stream no longer hides `Block::load()` of a file name,
   and the `else` in the aggregation of the graph of `smspp_satpart` is
