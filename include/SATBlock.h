@@ -341,6 +341,8 @@ class SATBlock : public Block
 
  void load( std::istream & input , char frmt = 0 ) override;
 
+ using Block::load;  ///< the load() from a file name
+
 /*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
  /// extends Block::deserialize( netCDF::NcGroup )
  /** Extends Block::deserialize( netCDF::NcGroup ) to the format of

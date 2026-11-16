@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-16
+
+### Fixed
+
+- the installed module `smspp.satblock` could not be imported, since its
+  package gave the interface of the module the target of the library by its
+  name in the build tree, which an installed package does not have
+
+- `SATBlock.h` and `smspp_satpart` compile without warnings under `-Wall`:
+  the `load()` of a stream no longer hides `Block::load()` of a file name,
+  and the `else` in the aggregation of the graph of `smspp_satpart` is
+  braced with the `if` it belongs to
+- the configuration no longer warns that policy CMP0144 is not set when
+  `MINISAT_ROOT` or `CADICAL_ROOT` is given: they are also prefixes of
+  `find_package()`
+
 ## [0.3.1] - 2026-11-03
 
 ### Fixed
@@ -335,7 +351,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assignment that makes the hard clauses satisfiable, written as WCNF or as a
   netCDF `SATBlock`; the same seed gives the same instance with any compiler
 
-[Unreleased]: https://gitlab.com/smspp/satblock/-/compare/0.3.1...develop
+[Unreleased]: https://gitlab.com/smspp/satblock/-/compare/0.4.0...develop
+[0.4.0]: https://gitlab.com/smspp/satblock/-/compare/0.3.1...0.4.0
 [0.3.1]: https://gitlab.com/smspp/satblock/-/compare/0.3.0...0.3.1
 [0.3.0]: https://gitlab.com/smspp/satblock/-/compare/0.2.0...0.3.0
 [0.2.0]: https://gitlab.com/smspp/satblock/-/compare/0.1.0...0.2.0

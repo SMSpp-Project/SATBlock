@@ -140,6 +140,12 @@ target_sources(${modName} PRIVATE
 # the SAT solvers are linked PRIVATE.
 target_sources(${modName} PRIVATE src/SATSolver.cpp)
 
+# CADICAL_ROOT and MINISAT_ROOT, which the Find modules read, are also
+# prefixes of find_package()
+if (POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif ()
+
 if (SATBlock_USE_CADICAL)
     find_package(CaDiCaL)
     if (NOT CaDiCaL_FOUND)
@@ -260,11 +266,26 @@ if (SMSpp_BUILD_MODULE)
     target_compile_features(${modName}_module PUBLIC cxx_std_20)
     # the interface takes the include paths and the definitions of the
     # library, but not its compile options (e.g., the -fopenmp of a source,
-    # which no header needs), so that it agrees with the module it imports
+    # which no header needs), so that it agrees with the module it imports;
+    # the installed package takes them from the installed library, whose
+    # target of this name is not there, and gives the include paths as -I
+    # options, before which CMake puts no prefix of the package
+    set(_inc $<TARGET_PROPERTY:${modName},INTERFACE_INCLUDE_DIRECTORIES>)
+    set(_def $<TARGET_PROPERTY:${modName},INTERFACE_COMPILE_DEFINITIONS>)
     target_include_directories(${modName}_module PRIVATE
-            $<TARGET_PROPERTY:${modName},INTERFACE_INCLUDE_DIRECTORIES>)
+            $<BUILD_INTERFACE:${_inc}>)
     target_compile_definitions(${modName}_module PRIVATE
-            $<TARGET_PROPERTY:${modName},INTERFACE_COMPILE_DEFINITIONS>)
+            $<BUILD_INTERFACE:${_def}>)
+    set(_lib ${modNamespace}::${modName})
+    set(_inc $<TARGET_PROPERTY:${_lib},INTERFACE_INCLUDE_DIRECTORIES>)
+    set(_def $<TARGET_PROPERTY:${_lib},INTERFACE_COMPILE_DEFINITIONS>)
+    target_compile_options(${modName}_module PRIVATE
+            $<INSTALL_INTERFACE:$<LIST:TRANSFORM,${_inc},PREPEND,-I>>)
+    target_compile_definitions(${modName}_module PRIVATE
+            $<INSTALL_INTERFACE:${_def}>)
+    unset(_lib)
+    unset(_inc)
+    unset(_def)
     target_link_libraries(${modName}_module PUBLIC $<LINK_ONLY:${modName}>
             ${modNamespace}::SMS++_module)
     add_library(${modNamespace}::${modName}_module ALIAS ${modName}_module)

@@ -225,13 +225,14 @@ static Graph aggregate( const Graph & g ,
  std::vector< std::map< unsigned int , double > > adj( nc );
  for( unsigned int u = 0 ; u < g.size() ; ++u )
   for( const auto & [ v , w ] : g[ u ] )
-   if( u <= v )  // each edge once, the self loops too
+   if( u <= v ) {  // each edge once, the self loops too
     if( comm[ u ] == comm[ v ] )
      adj[ comm[ u ] ][ comm[ u ] ] += w;
     else {
      adj[ comm[ u ] ][ comm[ v ] ] += w;
      adj[ comm[ v ] ][ comm[ u ] ] += w;
      }
+    }
  Graph a( nc );
  for( unsigned int c = 0 ; c < nc ; ++c )
   a[ c ].assign( adj[ c ].begin() , adj[ c ].end() );
