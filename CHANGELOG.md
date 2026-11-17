@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `intTrace` of `SATSolver` makes the SAT solver report each step of its
+  search (decision, propagation, conflict, backtrack, model) to the handlers
+  of the new event `eSATSearch`, which read it by `get_search_step()`, and
+  `get_search_statistics()` gives the decisions, conflicts and propagations
+  of the search: `CaDiCaLSATSolver` follows the search by an
+  `ExternalPropagator` of CaDiCaL that observes all the variables, and
+  counts only with `intTrace`, `MiniSATSolver` gives the counters that
+  MiniSat keeps and no step
+
 ### Changed
 
 - the library is kept in whoever links it by a source that calls its

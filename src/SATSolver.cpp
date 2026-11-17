@@ -101,6 +101,9 @@ void SATSolver::set_par( idx_type par , int value )
   case( intMaxSATHarden ):
    Harden = ( value != 0 );
    break;
+  case( intTrace ):
+   Trace = ( value != 0 );
+   break;
   case( intMaxIter ):
    MaxIter = std::max( value , 0 );
    break;
@@ -121,6 +124,7 @@ int SATSolver::get_dflt_int_par( idx_type par ) const
   case( intMaxSATWCE ):       return( 0 );
   case( intMaxSATKeepCores ): return( 0 );
   case( intMaxSATHarden ):    return( 1 );
+  case( intTrace ):           return( 0 );
   default:                    return( Solver::get_dflt_int_par( par ) );
   }
  }
@@ -137,6 +141,7 @@ int SATSolver::get_int_par( idx_type par ) const
   case( intMaxSATWCE ):       return( WCE ? 1 : 0 );
   case( intMaxSATKeepCores ): return( KeepCores ? 1 : 0 );
   case( intMaxSATHarden ):    return( Harden ? 1 : 0 );
+  case( intTrace ):           return( Trace ? 1 : 0 );
   case( intMaxIter ):         return( MaxIter );
   default:                    return( Solver::get_int_par( par ) );
   }
@@ -160,6 +165,8 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
   return( intMaxSATKeepCores );
  if( name == "intMaxSATHarden" )
   return( intMaxSATHarden );
+ if( name == "intTrace" )
+  return( intTrace );
  return( Solver::int_par_str2idx( name ) );
  }
 
@@ -167,12 +174,25 @@ Solver::idx_type SATSolver::int_par_str2idx( const std::string & name ) const
 
 const std::string & SATSolver::int_par_idx2str( idx_type idx ) const
 {
- static const std::array< std::string , 7 > names = { "intMaxSAT" ,
+ static const std::array< std::string , 8 > names = { "intMaxSAT" ,
 		"intMaxSATTrim" , "intMaxSATMinBudget" , "intMaxSATRestart" ,
-		"intMaxSATWCE" , "intMaxSATKeepCores" , "intMaxSATHarden" };
+		"intMaxSATWCE" , "intMaxSATKeepCores" , "intMaxSATHarden" ,
+		"intTrace" };
  if( ( idx >= intMaxSAT ) && ( idx < intLastAlgParSATS ) )
   return( names[ idx - intMaxSAT ] );
  return( Solver::int_par_idx2str( idx ) );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+void SATSolver::search_step( int type , int var , bool value , int level )
+{
+ f_step.type = type;
+ f_step.var = var > 0 ? block_var( var ) : -1;
+ f_step.value = value;
+ f_step.level = level;
+ for( auto & ev : v_events[ eSATSearch ] )
+  ev();
  }
 
 /*--------------------------------------------------------------------------*/

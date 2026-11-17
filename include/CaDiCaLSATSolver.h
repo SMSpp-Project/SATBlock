@@ -59,7 +59,22 @@ namespace SMSpp_di_unipi_it
  * By default the lucky phases, which CaDiCaL tries at the start of each
  * solve, are off ("lucky=0"), since OLL asks for many solves with
  * assumptions and they rarely pay there; an empty strCaDiCaLOptions gives
- * back all the defaults of CaDiCaL. */
+ * back all the defaults of CaDiCaL.
+ *
+ * With intTrace set [see SATSolver], the search is followed by an
+ * ExternalPropagator of CaDiCaL that never propagates nor adds a clause,
+ * and that observes all the variables: a decision is the first literal
+ * assigned after a new decision level, a conflict a backtrack followed by
+ * an assignment (the literal of the learnt clause) rather than by a new
+ * decision level, which makes it a restart (the backtrack at the end of a
+ * solve, or that of a new one, included), and a propagation any other literal
+ * assigned. The counts [see get_search_statistics()] are made in the same
+ * way, and only with intTrace, as the interface of CaDiCaL gives none:
+ * a decision on an assumption counts as one, and propagations are the
+ * literals set at a level by something other than its decision. An
+ * observed variable is frozen, i.e., it is not eliminated by the
+ * inprocessing, hence the search with intTrace is not the same as without
+ * it, although its answer is. */
 
 class CaDiCaLSATSolver : public SATSolver
 {
@@ -77,6 +92,12 @@ class CaDiCaLSATSolver : public SATSolver
  /// returns the name and version of CaDiCaL
 
  [[nodiscard]] std::string signature( void ) const override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the counters of the search, with intTrace only [see the class]
+
+ [[nodiscard]] SearchStatistics get_search_statistics( void )
+  const override;
 
 /*----------------------- METHODS FOR HANDLING PARAMETERS ------------------*/
  /// the string parameters of CaDiCaLSATSolver, on top of those of SATSolver
@@ -156,6 +177,10 @@ class CaDiCaLSATSolver : public SATSolver
  std::unique_ptr< CaDiCaL::Solver > f_solver;  ///< the SAT solver
 
  std::unique_ptr< Term > f_term;  ///< its Terminator
+
+ struct Follow;  ///< the CaDiCaL::ExternalPropagator following the search
+
+ std::unique_ptr< Follow > f_follow;  ///< the one of f_solver, if any
 
  std::string Config;           ///< the parameter strCaDiCaLConfig
 

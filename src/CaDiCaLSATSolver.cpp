@@ -16,8 +16,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 #include "cadical.hpp"
 
@@ -50,13 +52,106 @@ struct CaDiCaLSATSolver::Term : public CaDiCaL::Terminator {
  };
 
 /*--------------------------------------------------------------------------*/
+/// the ExternalPropagator following the search [see intTrace]
+/** It reads the steps out of the notifications as the comments to the class
+ * say, giving each to SATSolver::search_step() if the SATSolver follows the
+ * search, and counting them anyway. The notifications and the callbacks
+ * whose signature has changed among the versions of CaDiCaL are there in
+ * each form, the one of the CaDiCaL at hand overriding its pure virtual. */
+
+struct CaDiCaLSATSolver::Follow : public CaDiCaL::ExternalPropagator {
+
+ explicit Follow( CaDiCaLSATSolver & s ) : f_s( s ) {}
+
+ // the literals assigned since the last notification
+ void notify_assignment( const std::vector< int > & lits ) {
+  for( auto lit : lits )
+   assigned( lit );
+  }
+
+ void notify_assignment( int lit , bool /* is_fixed */ ) { assigned( lit ); }
+
+ void notify_new_decision_level( void ) override {
+  flush();
+  ++f_level;
+  ++f_stat.decisions;
+  f_decision = true;
+  }
+
+ void notify_backtrack( size_t new_level ) override {
+  flush();
+  f_backtrack = true;
+  f_from = f_level;
+  f_level = int( new_level );
+  f_decision = false;
+  }
+
+ bool cb_check_found_model( const std::vector< int > & ) override {
+  flush();
+  if( f_s.follows_search() )
+   f_s.search_step( SearchStep::eModel , 0 , false , f_level );
+  return( true );
+  }
+
+ bool cb_has_external_clause( bool & /* is_forgettable */ ) {
+  return( false );
+  }
+
+ bool cb_has_external_clause( void ) { return( false ); }
+
+ int cb_add_external_clause_lit( void ) override { return( 0 ); }
+
+ // a backtrack not followed by an assignment: a restart
+ void flush( void ) {
+  if( ! f_backtrack )
+   return;
+  f_backtrack = false;
+  if( f_s.follows_search() )
+   f_s.search_step( SearchStep::eRestart , 0 , false , f_level );
+  }
+
+ void assigned( int lit ) {
+  const bool follow = f_s.follows_search();
+  if( f_backtrack ) {  // the literal of the clause learnt from a conflict
+   f_backtrack = false;
+   ++f_stat.conflicts;
+   if( follow ) {
+    f_s.search_step( SearchStep::eConflict , 0 , false , f_from );
+    f_s.search_step( SearchStep::eBacktrack , 0 , false , f_level );
+    }
+   }
+  int type = SearchStep::ePropagate;
+  if( f_decision ) {
+   f_decision = false;
+   type = SearchStep::eDecide;
+   }
+  else
+   ++f_stat.propagations;
+  if( follow )
+   f_s.search_step( type , std::abs( lit ) , lit > 0 , f_level );
+  }
+
+ CaDiCaLSATSolver & f_s;
+ SearchStatistics f_stat{ 0 , 0 , 0 };
+ int f_level = 0;            ///< the decision level
+ int f_from = 0;             ///< the level a backtrack has left
+ bool f_decision = false;    ///< if the next literal is a decision
+ bool f_backtrack = false;   ///< if a backtrack waits to be told apart
+ int f_observed = 0;         ///< the variables observed so far
+ };
+
+/*--------------------------------------------------------------------------*/
 /*--------------------- CONSTRUCTOR AND DESTRUCTOR -------------------------*/
 /*--------------------------------------------------------------------------*/
 
 CaDiCaLSATSolver::CaDiCaLSATSolver( void )
  : SATSolver() , f_term( std::make_unique< Term >( *this ) ) {}
 
-CaDiCaLSATSolver::~CaDiCaLSATSolver() = default;
+CaDiCaLSATSolver::~CaDiCaLSATSolver()
+{
+ if( f_solver && f_follow )
+  f_solver->disconnect_external_propagator();
+ }
 
 /*--------------------------------------------------------------------------*/
 /*--------------------------------- METHODS --------------------------------*/
@@ -65,6 +160,14 @@ CaDiCaLSATSolver::~CaDiCaLSATSolver() = default;
 std::string CaDiCaLSATSolver::signature( void ) const
 {
  return( std::string( "cadical-" ) + CaDiCaL::Solver::version() );
+ }
+
+/*--------------------------------------------------------------------------*/
+
+SATSolver::SearchStatistics CaDiCaLSATSolver::get_search_statistics( void )
+ const
+{
+ return( f_follow ? f_follow->f_stat : SearchStatistics() );
  }
 
 /*--------------------------------------------------------------------------*/
@@ -164,6 +267,9 @@ const std::string & CaDiCaLSATSolver::str_par_idx2str( idx_type idx ) const
 
 void CaDiCaLSATSolver::sat_new( void )
 {
+ if( f_solver && f_follow )
+  f_solver->disconnect_external_propagator();
+ f_follow.reset();
  f_solver = std::make_unique< CaDiCaL::Solver >();
  if( ! Config.empty() )
   f_solver->configure( Config.c_str() );
@@ -190,6 +296,15 @@ int CaDiCaLSATSolver::sat_solve( const std::vector< int > & assumptions ,
  if( conflicts >= 0 )  // for the next solve() only
   f_solver->limit( "conflicts" , int( std::min( conflicts ,
 					long( std::numeric_limits< int >::max() ) ) ) );
+
+ if( Trace ) {  // all the variables there so far are observed
+  if( ! f_follow ) {
+   f_follow = std::make_unique< Follow >( *this );
+   f_solver->connect_external_propagator( f_follow.get() );
+   }
+  for( const int n = f_solver->vars() ; f_follow->f_observed < n ; )
+   f_solver->add_observed_var( ++f_follow->f_observed );
+  }
 
  const bool limited = MaxTime < Inf< double >();
  if( limited )

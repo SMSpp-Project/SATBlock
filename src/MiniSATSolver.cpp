@@ -100,6 +100,18 @@ std::string MiniSATSolver::signature( void ) const
 
 /*--------------------------------------------------------------------------*/
 
+SATSolver::SearchStatistics MiniSATSolver::get_search_statistics( void )
+ const
+{
+ if( ! f_solver )
+  return( SearchStatistics() );
+ return( SearchStatistics{ long( f_solver->decisions ) ,
+			    long( f_solver->conflicts ) ,
+			    long( f_solver->propagations ) } );
+ }
+
+/*--------------------------------------------------------------------------*/
+
 void MiniSATSolver::sat_new( void )
 {
  f_solver = std::make_unique< Minisat::Solver >();

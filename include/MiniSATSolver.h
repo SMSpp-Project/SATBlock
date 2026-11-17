@@ -50,7 +50,11 @@ namespace SMSpp_di_unipi_it
  * incremental SAT solver is MiniSat (http://minisat.se), used through its
  * C++ interface. MiniSat having no callback to be stopped, the time limit
  * is enforced by solving with a budget of conflicts and checking the time
- * between one budget and the next. */
+ * between one budget and the next. MiniSat having no callback either to be
+ * followed, intTrace [see SATSolver] is not heeded, and only the counters
+ * of its search are read [see get_search_statistics()], which MiniSat keeps
+ * anyway: a propagation is there a literal taken from the queue of unit
+ * propagation, decisions included. */
 
 class MiniSATSolver : public SATSolver
 {
@@ -68,6 +72,12 @@ class MiniSATSolver : public SATSolver
  /// returns the name and version of MiniSat
 
  [[nodiscard]] std::string signature( void ) const override;
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the counters that MiniSat keeps since it was made
+
+ [[nodiscard]] SearchStatistics get_search_statistics( void )
+  const override;
 
 /*---------------------- PROTECTED PART OF THE CLASS -----------------------*/
 

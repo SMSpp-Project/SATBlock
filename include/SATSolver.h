@@ -283,7 +283,7 @@ class SATSolver : public Solver , public RelaxationSolver
 /*------------------------------ CONSTRUCTOR -------------------------------*/
  /// constructor: it does nothing, the SAT solver is created by compute()
 
- SATSolver( void ) : Solver() {}
+ SATSolver( void ) : Solver() { v_events.resize( e_last_event_type_SATS ); }
 
 /*------------------------------- DESTRUCTOR -------------------------------*/
  /// destructor: the derived class releases its SAT solver
@@ -352,6 +352,14 @@ class SATSolver : public Solver , public RelaxationSolver
 				* the best solution and the lower bound is
 				* kept in the SAT solver for the rest of the
 				* compute() [see the class]; 0 never. */
+  intTrace ,                   ///< 1 to follow the search of the SAT solver
+                               /**< With 1, the SAT solver reports each step
+				* of its search to the handlers of the event
+				* eSATSearch [see SearchStep] and counts them
+				* [see get_search_statistics()], where it can
+				* (CaDiCaLSATSolver); 0 (the default) never.
+				* Following the search slows it down, and it
+				* may change it [see CaDiCaLSATSolver]. */
   intLastAlgParSATS            ///< first new int parameter of derived classes
   };
 
@@ -494,6 +502,73 @@ class SATSolver : public Solver , public RelaxationSolver
  /// returns the name and version of the SAT solver
 
  [[nodiscard]] virtual std::string signature( void ) const = 0;
+
+/*------------------- METHODS FOR FOLLOWING THE SEARCH ---------------------*/
+ /// the events of SATSolver, on top of those of ThinComputeInterface
+
+ enum event_type_SATS {
+  eSATSearch = e_last_event_type ,  ///< a step of the search of the SAT
+                                    /**< Called, with intTrace set, at each
+   * step of the search of the SAT solver, which get_search_step() describes
+   * while the handler runs; what the handler returns is not read, since the
+   * SAT solver cannot be stopped from within a step. */
+  e_last_event_type_SATS            ///< first new event of derived classes
+  };
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the events supported: those of ThinComputeInterface and eSATSearch
+
+ [[nodiscard]] EventID max_event_number( void ) const override {
+  return( e_last_event_type_SATS );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// a step of the search of the SAT solver [see eSATSearch]
+
+ struct SearchStep {
+  /// the kinds of step
+  enum step_type {
+   eDecide = 0 ,  ///< var is set to value by a decision, opening level
+   ePropagate ,   ///< var is set to value by unit propagation at level
+   eConflict ,    ///< a conflict at level, a clause being learnt
+   eBacktrack ,   ///< the assignments above level are undone by a conflict
+   eRestart ,     ///< the assignments above level are undone otherwise
+   eModel         ///< all the clauses are satisfied, at level
+   };
+  int type = eDecide;  ///< the kind of step [see step_type]
+  int var = -1;        ///< the variable of the SATBlock (from 0), -1 if of
+                       ///< OLL or none
+  bool value = false;  ///< the value given to var
+  int level = 0;       ///< the decision level after the step
+  };
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the step being reported to the handlers of eSATSearch
+
+ [[nodiscard]] const SearchStep & get_search_step( void ) const {
+  return( f_step );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the counters of the search of the SAT solver
+
+ struct SearchStatistics {
+  long decisions = -1;     ///< the decisions
+  long conflicts = -1;     ///< the conflicts
+  long propagations = -1;  ///< the literals set by unit propagation
+  };
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// the counters of the search since the SAT solver was made
+ /** Returns the decisions, conflicts and propagations of the SAT solver
+  * made last [see the comments to the class on when compute() makes one],
+  * -1 for those it does not count; the base class counts nothing. What
+  * each SAT solver calls a propagation is not the same: see the derived
+  * classes. */
+
+ [[nodiscard]] virtual SearchStatistics get_search_statistics( void ) const {
+  return( SearchStatistics() );
+  }
 
 /*--------------------- METHODS FOR READING THE NODE -----------------------*/
  /// the SATBlock being solved
@@ -695,6 +770,22 @@ class SATSolver : public Solver , public RelaxationSolver
 
  [[nodiscard]] bool time_is_up( void ) const;
 
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// true if the steps of the search go to the handlers of eSATSearch
+
+ [[nodiscard]] bool follows_search( void ) const {
+  return( Trace && ( ! v_events[ eSATSearch ].empty() ) );
+  }
+
+/*- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+ /// gives a step of the search to the handlers of eSATSearch
+ /** Gives the handlers of eSATSearch the step of type \p type on the
+  * variable \p var of the SAT solver (0 if none) set to \p value, the
+  * decision level being \p level after it; called by the derived classes
+  * only if follows_search(). */
+
+ void search_step( int type , int var , bool value , int level );
+
 /*------------------ THE PRIMITIVES OF THE DERIVED CLASSES -----------------*/
  /// creates a new, empty SAT solver, releasing the previous one if any
 
@@ -753,6 +844,10 @@ class SATSolver : public Solver , public RelaxationSolver
  bool KeepCores = false;       ///< the parameter intMaxSATKeepCores
 
  bool Harden = true;           ///< the parameter intMaxSATHarden
+
+ bool Trace = false;           ///< the parameter intTrace
+
+ SearchStep f_step;            ///< the step given to eSATSearch
 
  /// the compute() with OLL done with this SAT solver
  long f_oll_computes = 0;
