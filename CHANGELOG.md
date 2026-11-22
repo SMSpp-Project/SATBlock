@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the one of `smspp_install_rpath()`, with no test on the system or on the
   compiler [see `SMSppModule.cmake` of SMS++]; CMake 3.24 or later is needed
 
+### Fixed
+
+- `FindMiniSat.cmake` looks for MiniSat also where vcpkg puts it, by hints,
+  with its debug library for the Debug configuration, where a build of
+  several configurations took the debug one for every configuration.
+
 ## [0.4.0] - 2026-11-16
 
 ### Fixed
