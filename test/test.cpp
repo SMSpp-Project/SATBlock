@@ -1659,13 +1659,15 @@ static void test_branch( void )
   const auto file = std::filesystem::temp_directory_path() /
 		    "SATBlockChange_test.nc4";
   fix.serialize( file.string() );
-  netCDF::NcFile f( file.string() , netCDF::NcFile::read );
-  auto back = Change::new_Change( f.getGroup( "Change_0" ) );
-  auto sback = dynamic_cast< SATBlockChange * >( back );
-  assert( sback && ( sback->type() == SATBlockChange::eFixX ) &&
-	  ( sback->nms() == Block::Subset{ 0 , 2 } ) &&
-	  ( sback->values() == std::vector< double >{ 1 , 0 } ) );
-  delete back;
+  {  // closed before it is removed, which Windows refuses on an open file
+   netCDF::NcFile f( file.string() , netCDF::NcFile::read );
+   auto back = Change::new_Change( f.getGroup( "Change_0" ) );
+   auto sback = dynamic_cast< SATBlockChange * >( back );
+   assert( sback && ( sback->type() == SATBlockChange::eFixX ) &&
+	   ( sback->nms() == Block::Subset{ 0 , 2 } ) &&
+	   ( sback->values() == std::vector< double >{ 1 , 0 } ) );
+   delete back;
+   }
   std::filesystem::remove( file );
   }
 
