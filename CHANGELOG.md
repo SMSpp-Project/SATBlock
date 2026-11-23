@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `FindMiniSat.cmake` looks for MiniSat also where vcpkg puts it, by hints,
+- `FindMiniSat.cmake` looks for MiniSat first where vcpkg puts it, alone,
   with its debug library for the Debug configuration, where a build of
   several configurations took the debug one for every configuration.
 

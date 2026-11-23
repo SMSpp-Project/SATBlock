@@ -35,9 +35,10 @@ find_path(MINISAT_INCLUDE_DIR
           PATH_SUFFIXES include
           DOC "MiniSat include directory.")
 
-# also where vcpkg puts it, with a debug one of its own: by HINTS, as the
-# toolchain of vcpkg puts its debug directory first among the default ones
-# under a generator of several configurations
+# also where vcpkg puts it, with a debug one of its own: those directories
+# first and alone, as the toolchain of vcpkg puts its debug directory in
+# CMAKE_PREFIX_PATH, which comes before any HINTS, under a generator of
+# several configurations
 set(_minisat_dirs ${MINISAT_ROOT} $ENV{MINISAT_ROOT})
 set(_minisat_debug "")
 if (VCPKG_INSTALLED_DIR)
@@ -47,7 +48,12 @@ if (VCPKG_INSTALLED_DIR)
 endif ()
 find_library(MINISAT_LIBRARY
              NAMES minisat
-             HINTS ${_minisat_dirs}
+             PATHS ${_minisat_dirs}
+             PATH_SUFFIXES lib/${CMAKE_LIBRARY_ARCHITECTURE} lib
+             NO_DEFAULT_PATH
+             DOC "MiniSat library.")
+find_library(MINISAT_LIBRARY
+             NAMES minisat
              PATH_SUFFIXES lib/${CMAKE_LIBRARY_ARCHITECTURE} lib
              DOC "MiniSat library.")
 find_library(MINISAT_LIBRARY_DEBUG
